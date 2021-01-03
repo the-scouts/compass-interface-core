@@ -1,0 +1,28 @@
+name: compass-interface-core
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.8
+  - pip
+
+  # For web requests & certificates
+  - requests
+  - certifi
+
+  # For parsing results
+  - lxml
+  - python-dateutil
+
+  # Data arrangement
+  - pandas
+
+  # Style
+  - black
+
+  # Build
+  - pep517
+  - twine
+
+#  - pip:
+#    -
