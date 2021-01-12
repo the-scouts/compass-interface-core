@@ -89,12 +89,14 @@ class CompassHierarchyScraper:
                 "name": unit_dict["Description"],
                 "parent_id": unit_dict["Parent"],
             }
+
             if unit_dict["Tag"]:
-                tag = json.loads(unit_dict["Tag"])
-                parsed["status"] = tag[0]["org_status"]
-                parsed["address"] = tag[0]["address"]
-                parsed["member_count"] = tag[0]["Members"]
-                parsed["section_type"] = tag[0]["SectionTypeDesc"]
+                tag = json.loads(unit_dict["Tag"])[0]
+                if tag:
+                    parsed["status"] = tag.get("org_status")
+                    parsed["address"] = tag.get("address")
+                    parsed["member_count"] = tag.get("Members")
+                    parsed["section_type"] = tag.get("SectionTypeDesc")
 
             result_units.append(parsed)
 
@@ -150,9 +152,15 @@ class CompassHierarchy:
         except FileNotFoundError:
             pass
 
+        # Fetch the hierarchy
         out = self._get_descendants_recursive(compass_id, hier_level=level)
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=False)
+
+        # Try and write to a file for caching
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False)
+        except IOError as e:
+            print(f"Unable to write cache file: {e.errno} - {e.strerror}")
 
         return out
 
@@ -243,12 +251,17 @@ class CompassHierarchy:
         except FileNotFoundError:
             pass
 
+        # Fetch all members
         all_members = {}
         for compass_id in compass_ids.drop_duplicates().to_list():
             print(f"Getting members for {compass_id}")
             all_members[compass_id] = self._scraper.get_members_with_roles_in_unit(compass_id)
 
-        with open(f"all-members-{parent_id}.json", "w", encoding="utf-8") as f:
-            json.dump(all_members, f, ensure_ascii=False, indent=4)
+        # Try and write to a file for caching
+        try:
+            with open(f"all-members-{parent_id}.json", "w", encoding="utf-8") as f:
+                json.dump(all_members, f, ensure_ascii=False, indent=4)
+        except IOError as e:
+            print(f"Unable to write cache file: {e.errno} - {e.strerror}")
 
         return all_members

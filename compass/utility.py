@@ -30,9 +30,13 @@ def setup_tls_certs() -> None:
         # Fetch Thawte CA from known URL, rather than including PEM
         ca_request = requests.get(thawte_CA_cert_url, allow_redirects=False)
 
-        with certifi_path.open("a", encoding="utf-8") as f:
-            f.write('\n# Label: "Thawte RSA CA 2018"\n')
-            f.write(ca_request.text)
+        # Write to certifi PEM
+        try:
+            with certifi_path.open("a", encoding="utf-8") as f:
+                f.write('\n# Label: "Thawte RSA CA 2018"\n')
+                f.write(ca_request.text)
+        except IOError as e:
+            print(f"Unable to write to certifi PEM: {e.errno} - {e.strerror}")
 
 
 def hash_code(text: str) -> int:
