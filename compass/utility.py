@@ -1,12 +1,14 @@
 import ast
 import ctypes
+import datetime
 import functools
+from pathlib import Path
+from typing import Any, Optional, Union
+
 import certifi
 import requests
-import datetime
 
-from pathlib import Path
-from dateutil.parser import parse
+from compass.logging import logger
 
 
 def setup_tls_certs() -> None:
@@ -19,7 +21,7 @@ def setup_tls_certs() -> None:
     Yes, it's horrid. TSA plz fix.
     """
 
-    thawte_CA_cert_url = "https://thawte.tbs-certificats.com/Thawte_RSA_CA_2018.crt"
+    thawte_ca_cert_url = "https://thawte.tbs-certificats.com/Thawte_RSA_CA_2018.crt"
 
     certifi_path = Path(certifi.where())
     certifi_contents = certifi_path.read_text("UTF-8")
@@ -27,10 +29,10 @@ def setup_tls_certs() -> None:
     # Check for contents of Thawte CA, if not add
     if "Thawte RSA CA 2018" not in certifi_contents:
 
-        print("Intermediate Certificate for Compass not found - Installing")
+        logger.info("Intermediate Certificate for Compass not found - Installing")
 
         # Fetch Thawte CA from known URL, rather than including PEM
-        ca_request = requests.get(thawte_CA_cert_url, allow_redirects=False)
+        ca_request = requests.get(thawte_ca_cert_url, allow_redirects=False)
 
         # Write to certifi PEM
         try:
@@ -38,7 +40,7 @@ def setup_tls_certs() -> None:
                 f.write('\n# Label: "Thawte RSA CA 2018"\n')
                 f.write(ca_request.text)
         except IOError as e:
-            print(f"Unable to write to certifi PEM: {e.errno} - {e.strerror}")
+            logger.error(f"Unable to write to certifi PEM: {e.errno} - {e.strerror}")
 
 
 def hash_code(text: str) -> int:
@@ -57,7 +59,7 @@ def compass_restify(data: dict) -> list:
     return [{"Key": f"{k}", "Value": f"{v}"} for k, v in data.items()]
 
 
-def cast(value):
+def cast(value, ast_eval: bool = False) -> Union[int, str, Any]:
     """Casts values to native python types.
 
     lxml ETree return types don't do this automatically, and by using
@@ -65,27 +67,29 @@ def cast(value):
     lists etc into native types.
     """
     try:
-        value = int(value)
+        return int(value)
     except (ValueError, TypeError):
+        if not ast_eval:
+            return str(value)
         try:
-            value = ast.literal_eval(str(value)) if value else value
+            return ast.literal_eval(str(value)) if value else value
         except (ValueError, TypeError, SyntaxError):
-            pass
-    return value
+            return value
 
 
-def parse_datetime_safe(datetime_str: str) -> datetime:
-    """
-    Parses the datetime string into a object if it isn't empty or unknown
-    """
-    if not datetime_str:
+def maybe_int(value) -> Optional[int]:
+    """Casts value to int or None."""
+    try:
+        return int(value)
+    except ValueError:
         return None
 
-    if len(datetime_str) == 0:
-        return None
 
-    if datetime_str is "Unknown":
+def parse(date_time_str: str) -> Optional[datetime.datetime]:
+    if not date_time_str:
         return None
-
-    # Attempt to parse into a datetime obj
-    return parse(datetime_str)
+    else:
+        try:
+            return datetime.datetime.strptime(date_time_str, "%d %B %Y")  # e.g. 01 January 2000
+        except ValueError:
+            return datetime.datetime.strptime(date_time_str, "%d %b %Y")  # e.g. 01 Jan 2000

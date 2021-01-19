@@ -1,11 +1,12 @@
 import datetime
-import re
 from pathlib import Path
+import re
 from typing import Tuple
 
 from lxml import html
 
-from compass.logon import CompassLogon
+from compass.logging import logger
+from compass.logon import Logon
 from compass.settings import Settings
 
 # TODO Enum???
@@ -27,13 +28,13 @@ class CompassReportPermissionError(PermissionError, Exception):
     pass
 
 
-def get_report_token(logon: CompassLogon, report_number: int) -> str:
+def get_report_token(logon: Logon, report_number: int) -> str:
     params = {
         "pReportNumber": report_number,
         "pMemberRoleNumber": f"{logon.mrn}",
     }
-    print("Getting report token")
-    response = logon.get(f"{Settings.base_url}{Settings.web_service_path}/ReportToken", auth_header=True, params=params)
+    logger.debug("Getting report token")
+    response = logon._get(f"{Settings.base_url}{Settings.web_service_path}/ReportToken", auth_header=True, params=params)
 
     response.raise_for_status()
     report_token_uri = response.json().get("d")
@@ -61,7 +62,7 @@ def get_report_export_url(report_page: str, filename: str = None) -> Tuple[str, 
     return export_url_path, report_export_url_data
 
 
-def get_report(logon: CompassLogon, report_type: str) -> bytes:
+def get_report(logon: Logon, report_type: str) -> bytes:
     # GET Report Page
     # POST Location Update
     # GET CSV data
@@ -72,11 +73,11 @@ def get_report(logon: CompassLogon, report_type: str) -> bytes:
     run_report_url = get_report_token(logon, report_types[report_type])
 
     # Compass does user-agent sniffing in reports!!!
-    logon.session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    logon._update_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
-    print("Generating report")
+    logger.info("Generating report")
     run_report = f"{Settings.base_url}/{run_report_url}"
-    report_page = logon.get(run_report)
+    report_page = logon._get(run_report)
     tree = html.fromstring(report_page.content)
     form: html.FormElement = tree.forms[0]
 
@@ -113,23 +114,23 @@ def get_report(logon: CompassLogon, report_type: str) -> bytes:
 
     # Including MicrosoftAJAX: Delta=true reduces size by ~1kb but increases time by 0.01s.
     # In reality we don't care about the output of this POST, just that it doesn't fail
-    report = logon.post(run_report, data=form_data, headers={"X-MicrosoftAjax": "Delta=true"})
+    report = logon._post(run_report, data=form_data, headers={"X-MicrosoftAjax": "Delta=true"})
     report.raise_for_status()
 
     if "compass.scouts.org.uk%2fError.aspx|" in report.text:
         raise CompassReportError("Compass Error!")
 
-    print("Exporting report")
+    logger.info("Exporting report")
     export_url_path, export_url_params = get_report_export_url(report_page.text)
-    csv_export = logon.get(f"{Settings.base_url}/{export_url_path}", params=export_url_params)
+    csv_export = logon._get(f"{Settings.base_url}/{export_url_path}", params=export_url_params)
 
     # TODO Debug check
-    print("Saving report")
+    logger.info("Saving report")
     time_string = datetime.datetime.now().replace(microsecond=0).isoformat().replace(":", "-")  # colons are illegal on windows
     filename = f"{time_string} - {logon.cn} ({logon.current_role}).csv"
     Path(filename).write_bytes(csv_export.content)  # TODO Debug check
 
-    print(len(csv_export.content))
-    print("Report Saved")
+    logger.debug(len(csv_export.content))
+    logger.info("Report Saved")
 
     return csv_export.content

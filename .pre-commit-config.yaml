@@ -15,12 +15,12 @@ repos:
       - id: check-yaml
         name: Check for valid syntax in YAML files
 
-#    # Enforce import ordering
-#  - repo: https://github.com/PyCQA/isort
-#    rev: stable
-#    hooks:
-#      - id: isort
-#        name: Enforce import ordering (isort)
+    # Enforce import ordering
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.7.0
+    hooks:
+      - id: isort
+        name: Enforce import ordering (isort)
 
 #    # Consistent setup.cfg formatting
 #  - repo: https://github.com/asottile/setup-cfg-fmt

@@ -1,6 +1,20 @@
+# core
+requests
 certifi
 lxml
 pandas
-python-dateutil
-requests
-typing_extensions
+# core-typing
+pydantic
+email-validator
+phonenumbers
+
+# dev
+ipython
+black
+isort
+pre-commit
+
+# build
+pep517
+twine
+build

@@ -1,4 +1,6 @@
 # Compass Interface - Core
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/compass-interface-core)
+![PyPI - Status](https://img.shields.io/pypi/status/compass-interface-core)
 [![PyPI Latest Release](https://img.shields.io/pypi/v/compass-interface-core.svg)](https://pypi.org/project/compass-interface-core/)
 [![Conda Latest Release](https://anaconda.org/conda-forge/compass-interface-core/badges/version.svg)](https://anaconda.org/conda-forge/compass-interface-core/)
 [![License](https://img.shields.io/pypi/l/compass-interface-core.svg)](https://github.com/the-scouts/compass-interface-core/blob/master/LICENSE)
@@ -35,8 +37,10 @@ pip install compass-interface-core
 - [requests](https://github.com/psf/requests) - for intuitive HTTP requests
 - [certifi](https://github.com/certifi/python-certifi) - for SSL/TLS certificate management
 - [lxml](https://lxml.de/) - for parsing HTML documents
-- [python-dateutil](https://github.com/dateutil/dateutil/lxm) - for parsing date strings
 - [pandas](https://github.com/pandas-dev/pandas) - for data management and transformation
+- [pydantic](https://github.com/samuelcolvin/pydantic/), 
+  [email-validator](https://github.com/JoshData/python-email-validator), 
+  [phonenumbers](https://github.com/daviddrysdale/python-phonenumbers) - for data validation and parsing
 
 ## License
 
@@ -51,4 +55,18 @@ The main project is found at [the-scouts/compass-interface](https://github.com/t
 
 ## Example Usage
 
-TBC
+```python
+import compass as ci
+
+# Turn on debug logging for development
+ci.logging.enable_debug_logging()
+
+# Login to Compass
+compass_session = ci.logon(username=..., password=...)
+
+# Setup Compass Helpers
+hierarchy = ci.Hierarchy(compass_session)
+people = ci.People(compass_session)
+
+
+```
