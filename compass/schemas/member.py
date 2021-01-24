@@ -44,8 +44,8 @@ TYPES_RELIGION = Union[
         "No religion",
         "Prefer not to say",
     ],
-    pydantic.constr(regex=r"^Christian.*"),
-    pydantic.constr(regex=r"^Any other religion.*"),
+    pydantic.constr(regex=r"^Christian.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Any other religion.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
 ]
 TYPES_OCCUPATION = Union[
     Literal[
@@ -57,12 +57,12 @@ TYPES_OCCUPATION = Union[
         "Looking after home of family",
         "Other",
     ],
-    pydantic.constr(regex=r"^Employed.*"),
-    pydantic.constr(regex=r"^Unemployed.*"),
-    pydantic.constr(regex=r"^Retired.*"),
-    pydantic.constr(regex=r"^Long term sick or disabled.*"),
-    pydantic.constr(regex=r"^Looking after home of family.*"),
-    pydantic.constr(regex=r"^Other.*"),
+    pydantic.constr(regex=r"^Employed.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Unemployed.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Retired.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Long term sick or disabled.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Looking after home of family.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Other.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
 ]
 TYPES_ROLE_CLASS = Literal[
     "Administrator",
@@ -148,12 +148,15 @@ class MemberGenericDict(generics.GenericModel, Generic[DataT]):
     __root__: Dict[int, DataT]  # Must use typing.Dict not dict as of pydantic 1.7.3
 
     def __iter__(self):
+        """Iterate over model items."""
         yield from self.__root__.items()
 
     def __getitem__(self, item):
+        """Get item by key."""
         return self.__root__[item]
 
     def __len__(self):
+        """Get number of items."""
         return len(self.__root__)
 
     def items(self):
@@ -164,12 +167,15 @@ class MemberGenericList(generics.GenericModel, Generic[DataT]):
     __root__: List[DataT]
 
     def __iter__(self):
+        """Iterate over model items."""
         return iter(self.__root__)
 
     def __getitem__(self, item):
+        """Get item by index."""
         return self.__root__[item]
 
     def __len__(self):
+        """Get number of items."""
         return len(self.__root__)
 
 

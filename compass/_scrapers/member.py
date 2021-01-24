@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import re
 import time
 from typing import get_args, Literal, TYPE_CHECKING, Union
@@ -24,9 +23,7 @@ MEMBER_PROFILE_TAB_TYPES = Literal[
 
 
 class PeopleScraper(InterfaceBase):
-    """
-
-    Class directly interfaces with Compass operations to extract member data.
+    """Class directly interfaces with Compass operations to extract member data.
 
     Compass's MemberProfile.aspx has 13 tabs:
      1. Personal Details (No Key)
@@ -58,7 +55,7 @@ class PeopleScraper(InterfaceBase):
     """
 
     def __init__(self, session: requests.Session, validate: bool = False):
-        """PeopleScraper constructor.
+        """Constructor for PeopleScraper.
 
         takes an initialised Session object from Logon
         """
@@ -84,6 +81,7 @@ class PeopleScraper(InterfaceBase):
 
         Todo:
             Other possible exceptions? i.e. from Requests
+
         """
         profile_tab = profile_tab.upper()
         tabs = tuple(tab.upper() for tab in get_args(MEMBER_PROFILE_TAB_TYPES))
@@ -134,6 +132,7 @@ class PeopleScraper(InterfaceBase):
 
         Todo:
             Other possible exceptions? i.e. from Requests
+
         """
         response = self._get_member_profile_tab(membership_num, "Personal")
 
@@ -195,8 +194,7 @@ class PeopleScraper(InterfaceBase):
             return details
 
     def get_roles_tab(self, membership_num: int, keep_non_volunteer_roles: bool = False) -> Union[schema.MemberRolesDict, dict]:
-        """
-        Returns data from Roles tab for a given member.
+        """Returns data from Roles tab for a given member.
 
         Sanitises the data to a common format, and removes Occasional Helper, Network, and PVG roles by default.
 
@@ -232,6 +230,7 @@ class PeopleScraper(InterfaceBase):
         Todo:
             Other possible exceptions? i.e. from Requests
             primary_role
+
         """
         logger.debug(f"getting roles tab for member number: {membership_num}")
         response = self._get_member_profile_tab(membership_num, "Roles")
@@ -244,10 +243,10 @@ class PeopleScraper(InterfaceBase):
         rows = tree.xpath("//tbody/tr")
         for row in rows:
             # Get children (cells in row)
-            cells = list(row)
+            cells = list(row)  # filter out empty elements
 
             # If current role allows selection of role for editing, remove tickbox
-            if len(cells[0].xpath("./label")) < 1:
+            if any(el.tag == "input" for el in cells[0]):
                 cells.pop(0)
 
             role_number = int(row.get("data-pk"))
@@ -259,7 +258,7 @@ class PeopleScraper(InterfaceBase):
                 role_status = status_with_review
                 review_date = None
 
-            roles_data[role_number] = dict(
+            role_details = dict(
                 role_number=role_number,
                 membership_number=membership_num,
                 role_title=cells[0].text_content().strip(),
@@ -275,27 +274,15 @@ class PeopleScraper(InterfaceBase):
                 review_date=review_date,
                 can_view_details=any("VIEWROLE" in el.get("class") for el in cells[6]),
             )
+            # Remove OHs etc from list
+            if not keep_non_volunteer_roles and (
+                "helper" in role_details["role_class"].lower()
+                or {role_details["role_title"].lower()} <= {"occasional helper", "pvg", "network member"}
+            ):
+                continue
 
-        if not keep_non_volunteer_roles:
-            # Remove OHs from list
-            filtered_data = {}
-            for role_number, role_details in roles_data.items():
+            roles_data[role_number] = role_details
 
-                if "helper" in role_details["role_class"].lower():
-                    continue
-
-                role_title = role_details["role_title"].lower()
-                if "occasional helper" in role_title:
-                    continue
-
-                if "pvg" in role_title:
-                    continue
-
-                if "network member" in role_title:
-                    continue
-
-                filtered_data[role_number] = role_details
-            roles_data = filtered_data
         if self.validate:
             return schema.MemberRolesDict.parse_obj(roles_data)
         else:
@@ -304,8 +291,7 @@ class PeopleScraper(InterfaceBase):
     def get_training_tab(
         self, membership_num: int, ongoing_only: bool = False
     ) -> Union[schema.MemberTrainingTab, schema.MemberMOGLList, dict]:
-        """
-        Returns data from Training tab for a given member.
+        """Returns data from Training tab for a given member.
 
         Args:
             membership_num: Membership Number to use
@@ -347,127 +333,123 @@ class PeopleScraper(InterfaceBase):
 
         Todo:
             Other possible exceptions? i.e. from Requests
+
         """
+        # pylint: disable=too-many-locals,too-many-statements
         response = self._get_member_profile_tab(membership_num, "Training")
         tree = html.fromstring(response)
 
         rows = tree.xpath("//table[@id='tbl_p5_TrainModules']/tr")
-        roles = [row for row in rows if "msTR" in row.classes]
-
-        personal_learning_plans = [row for row in rows if "trPLP" in row.classes]
 
         training_plps = {}
-        training_gdpr = []
-        for plp in personal_learning_plans:
-            plp_table = plp.getchildren()[0].getchildren()[0]
-            plp_data = []
-            content_rows = [row for row in plp_table if "msTR trMTMN" == row.get("class")]
-            for module_row in content_rows:
-                module_data = {}
-                child_nodes = list(module_row)
-                module_data["pk"] = int(module_row.get("data-pk"))
-                module_data["module_id"] = int(child_nodes[0].get("id")[4:])
-                matches = re.match(r"^([A-Z0-9]+) - (.+)$", child_nodes[0].text_content()).groups()
-                if matches:
-                    module_data["code"] = str(matches[0])
-                    module_data["name"] = matches[1]
-
-                    # Skip processing if we only want ongoing learning data and the module
-                    # is not GDPR.
-                    if ongoing_only and "gdpr" not in module_data["code"].lower():
+        training_roles = {}
+        for row in rows:
+            # Personal Learning Plan (PLP) data
+            if "trPLP" in row.classes:
+                plp = row
+                plp_table = plp.getchildren()[0].getchildren()[0]
+                plp_data = []
+                for module_row in plp_table:
+                    if module_row.get("class") != "msTR trMTMN":
                         continue
 
-                learning_required = child_nodes[1].text_content().lower()
-                module_data["learning_required"] = "yes" in learning_required if learning_required else None
-                module_data["learning_method"] = child_nodes[2].text_content() or None
-                module_data["learning_completed"] = parse(child_nodes[3].text_content())
-                module_data["learning_date"] = parse(child_nodes[3].text_content())
+                    module_data = {}
+                    child_nodes = list(module_row)
+                    module_data["pk"] = int(module_row.get("data-pk"))
+                    module_data["module_id"] = int(child_nodes[0].get("id")[4:])
+                    matches = re.match(r"^([A-Z0-9]+) - (.+)$", child_nodes[0].text_content()).groups()
+                    if matches:
+                        module_data["code"] = str(matches[0])
+                        module_data["name"] = matches[1]
 
-                validated_by_string = child_nodes[4].text_content()
-                if validated_by_string:
-                    validated_by_data = validated_by_string.split(" ", maxsplit=1) + [""]  # Add empty item to prevent IndexError
-                    module_data["validated_membership_number"] = maybe_int(validated_by_data[0])
-                    module_data["validated_name"] = validated_by_data[1]
-                module_data["validated_date"] = parse(child_nodes[5].text_content())
+                        # Skip processing if we only want ongoing learning data and the module is not GDPR.
+                        if ongoing_only and "gdpr" not in module_data["code"].lower():
+                            continue
 
-                plp_data.append(module_data)
+                    learning_required = child_nodes[1].text_content().lower()
+                    module_data["learning_required"] = "yes" in learning_required if learning_required else None
+                    module_data["learning_method"] = child_nodes[2].text_content() or None
+                    module_data["learning_completed"] = parse(child_nodes[3].text_content())
+                    module_data["learning_date"] = parse(child_nodes[3].text_content())
 
-                # Save GDPR validations
-                if module_data.get("code").upper() == "GDPR":
-                    training_gdpr.append(module_data.get("validated_date"))
+                    validated_by_string = child_nodes[4].text_content()
+                    if validated_by_string:
+                        # Add empty item to prevent IndexError
+                        validated_by_data = validated_by_string.split(" ", maxsplit=1) + [""]
+                        module_data["validated_membership_number"] = maybe_int(validated_by_data[0])
+                        module_data["validated_name"] = validated_by_data[1]
+                    module_data["validated_date"] = parse(child_nodes[5].text_content())
 
-            training_plps[int(plp_table.get("data-pk"))] = plp_data
+                    plp_data.append(module_data)
 
-        training_ogl = {}
-        ongoing_learning_rows = tree.xpath("//tr[@data-ng_code]")
-        for ongoing_learning in ongoing_learning_rows:
-            cell_text = {c.get("id"): c.text_content() for c in ongoing_learning}
-            cell_text = {k.split("_")[0] if isinstance(k, str) else k: v for k, v in cell_text.items()}
+                training_plps[int(plp_table.get("data-pk"))] = plp_data
 
-            ogl_data = {
-                "name": cell_text.get(None),
-                "completed_date": parse(cell_text.get("tdLastComplete")),
-                "renewal_date": parse(cell_text.get("tdRenewal")),
-            }
+            # Role data
+            if "msTR" in row.classes:
+                role = row
 
-            training_ogl[ongoing_learning.get("data-ng_code")] = ogl_data
-            # TODO missing data-pk from list(cell)[0].tag == "input", and module names/codes. Are these important?
+                child_nodes = list(role)
+
+                info = {}  # NoQA
+
+                info["role_number"] = int(role.xpath("./@data-ng_mrn")[0])
+                info["role_title"] = child_nodes[0].text_content()
+                info["role_start"] = parse(child_nodes[1].text_content())
+                status_with_review = child_nodes[2].text_content()
+                if status_with_review.startswith("Full (Review Due: "):
+                    info["role_status"] = "Full"
+                    info["review_date"] = parse(status_with_review.removeprefix("Full (Review Due: ").removesuffix(")"))
+                else:
+                    info["role_status"] = status_with_review
+                    info["review_date"] = None
+
+                info["location"] = child_nodes[3].text_content()
+
+                training_advisor_string = child_nodes[4].text_content()
+                if training_advisor_string:
+                    info["ta_data"] = training_advisor_string
+                    # Add empty item to prevent IndexError
+                    training_advisor_data = training_advisor_string.split(" ", maxsplit=1) + [""]
+                    info["ta_number"] = maybe_int(training_advisor_data[0])
+                    info["ta_name"] = training_advisor_data[1]
+
+                completion_string = child_nodes[5].text_content()
+                if completion_string:
+                    info["completion"] = completion_string
+                    parts = completion_string.split(":")
+                    info["completion_type"] = parts[0].strip()
+                    info["completion_date"] = parse(parts[1].strip())
+                    assert len(parts) <= 2, parts[2:]
+                    # info["ct"] = parts[3:]  # TODO what is this? From CompassRead.php
+                info["wood_badge_number"] = child_nodes[5].get("id", "").removeprefix("WB_") or None
+
+                training_roles[info["role_number"]] = info
 
         # Handle GDPR:
         # Get latest GDPR date
-        sorted_gdpr = sorted([date for date in training_gdpr if isinstance(date, datetime.date)], reverse=True)
-        gdpr_date = sorted_gdpr[0] if sorted_gdpr else None
-        training_ogl["GDPR"] = {
-            "name": "GDPR",
-            "completed_date": gdpr_date,
+        training_ogl = {
+            "GDPR": dict(
+                name="GDPR",
+                completed_date=next(
+                    reversed(
+                        sorted(mod["validated_date"] for plp in training_plps.values() for mod in plp if mod["code"] == "GDPR")
+                    ),
+                    None,
+                ),
+            ),
         }
+        for ongoing_learning in tree.xpath("//tr[@data-ng_code]"):
+            cell_text = {c.get("id", "<None>").split("_")[0]: c.text_content() for c in ongoing_learning}
+
+            training_ogl[ongoing_learning.get("data-ng_code")] = dict(
+                name=cell_text.get("<None>"),
+                completed_date=parse(cell_text.get("tdLastComplete")),
+                renewal_date=parse(cell_text.get("tdRenewal")),
+            )
+            # TODO missing data-pk from list(cell)[0].tag == "input", and module names/codes. Are these important?
 
         if ongoing_only:
-            if self.validate:
-                return schema.MemberMOGLList.parse_obj(training_ogl)
-            else:
-                return training_ogl
-
-        training_roles = {}
-        for role in roles:
-            child_nodes = list(role)
-
-            info = {}  # NoQA
-
-            info["role_number"] = int(role.xpath("./@data-ng_mrn")[0])
-            info["role_title"] = child_nodes[0].text_content()
-            info["role_start"] = parse(child_nodes[1].text_content())
-            status_with_review = child_nodes[2].text_content()
-            if status_with_review.startswith("Full (Review Due: "):
-                role_status = "Full"
-                review_date = parse(status_with_review.removeprefix("Full (Review Due: ").removesuffix(")"))
-            else:
-                role_status = status_with_review
-                review_date = None
-
-            info["role_status"] = role_status
-            info["review_date"] = review_date
-            info["location"] = child_nodes[3].text_content()
-
-            training_advisor_string = child_nodes[4].text_content()
-            if training_advisor_string:
-                info["ta_data"] = training_advisor_string
-                # Add empty item to prevent IndexError
-                training_advisor_data = training_advisor_string.split(" ", maxsplit=1) + [""]
-                info["ta_number"] = maybe_int(training_advisor_data[0])
-                info["ta_name"] = training_advisor_data[1]
-
-            completion_string = child_nodes[5].text_content()
-            if completion_string:
-                info["completion"] = completion_string
-                parts = completion_string.split(":")
-                info["completion_type"] = parts[0].strip()
-                info["completion_date"] = parse(parts[1].strip())
-                assert len(parts) <= 2, parts[2:]
-                info["ct"] = parts[3:]  # TODO what is this? From CompassRead.php
-            info["wood_badge_number"] = child_nodes[5].get("id", "").removeprefix("WB_") or None
-
-            training_roles[info["role_number"]] = info
+            return schema.MemberMOGLList.parse_obj(training_ogl) if self.validate else training_ogl
 
         training_data = {
             "roles": training_roles,
@@ -475,14 +457,10 @@ class PeopleScraper(InterfaceBase):
             "mandatory": training_ogl,
         }
 
-        if self.validate:
-            return schema.MemberTrainingTab.parse_obj(training_data)
-        else:
-            return training_data
+        return schema.MemberTrainingTab.parse_obj(training_data) if self.validate else training_data
 
     def get_permits_tab(self, membership_num: int) -> Union[schema.MemberPermitsList, list]:
-        """
-        Returns data from Permits tab for a given member.
+        """Returns data from Permits tab for a given member.
 
         If a permit has been revoked, the expires value is None and the status is PERM_REV
 
@@ -497,6 +475,7 @@ class PeopleScraper(InterfaceBase):
 
         Todo:
             Other possible exceptions? i.e. from Requests
+
         """
         response = self._get_member_profile_tab(membership_num, "Permits")
         tree = html.fromstring(response)
@@ -527,8 +506,7 @@ class PeopleScraper(InterfaceBase):
     def get_roles_detail(
         self, role_number: int, response: Union[str, requests.Response] = None
     ) -> Union[schema.MemberRolePopup, dict]:
-        """
-        Returns detailed data from a given role number.
+        """Returns detailed data from a given role number.
 
         Args:
             role_number: Role Number to use
@@ -572,7 +550,9 @@ class PeopleScraper(InterfaceBase):
 
         Todo:
             Other possible exceptions? i.e. from Requests
+
         """
+        # pylint: disable=too-many-locals,too-many-statements
         renamed_levels = {
             "County / Area / Scottish Region / Overseas Branch": "County",
         }
@@ -654,12 +634,12 @@ class PeopleScraper(InterfaceBase):
         role_details["references"] = references_codes.get(ref_code, ref_code)
 
         approval_values = {}
-        approval_titles = {}  # TODO use title text - set by / on etc
         for row in tree.xpath("//tr[@class='trProp']"):
             select = row[1][0]
             code = select.get("data-app_code")
             approval_values[code] = select.get("data-db")
-            approval_titles[code] = select.get("title")
+            # select.get("title") gives title text, but this is not useful as it does not reflect latest changes,
+            # but only who added the role to Compass.
 
         # Appointment Panel Approval
         role_details["appointment_panel_approval"] = approval_values.get("ROLPRP|AACA")

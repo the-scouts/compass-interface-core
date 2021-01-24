@@ -9,6 +9,7 @@ from compass.utility import maybe_int
 
 class People:
     def __init__(self, session: Logon):
+        """Constructor for People."""
         self._scraper = PeopleScraper(session.s)
 
     def get_roles(self, membership_num: int, keep_non_volunteer_roles: bool = False) -> list:
@@ -51,8 +52,7 @@ class People:
 
     # See getRole in PGS\Needle
     def _roles_tab(self, membership_num: int, keep_non_volunteer_roles: bool = False) -> dict:
-        """
-        Gets the data from the Role tab in Compass for the specified member.
+        """Gets the data from the Role tab in Compass for the specified member.
 
         Sanitises the data to a common format, and removes Occasional Helper, Network, and PVG roles by default.
 
@@ -63,8 +63,7 @@ class People:
         return self._scraper.get_roles_tab(membership_num, keep_non_volunteer_roles)
 
     def _training_tab(self, membership_num: int) -> dict:
-        """
-        Gets training tab data for a given member
+        """Gets training tab data for a given member.
 
         :param membership_num: Compass ID
         :return:
