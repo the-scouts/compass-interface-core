@@ -9,7 +9,7 @@ from compass.logging import logger
 from compass.logon import Logon
 from compass.schemas import hierarchy as schema
 
-TYPES_HIERARCHY_LEVEL = Literal["Organisation", "Country", "Region", "County", "District", "Group"]
+TYPES_UNIT_LEVELS = Literal["Group", "District", "County", "Region", "Country", "Organisation"]
 
 
 class Levels(enum.IntEnum):
@@ -41,13 +41,78 @@ class UnitSections(enum.IntEnum):
 class Hierarchy:
     def __init__(self, session: Logon, validate: bool = False):
         """Constructor for Hierarchy."""
-        self._scraper = HierarchyScraper(session.s)
-        self.validate = validate
+        self._scraper: HierarchyScraper = HierarchyScraper(session.s)
+        self.validate: bool = validate
+        self.session: Logon = session
+
+    def get_unit_data(
+        self,
+        unit_level: Optional[schema.HierarchyLevel] = None,
+        _id: Optional[int] = None,
+        level: Optional[str] = None,
+        use_default: bool = False,
+    ) -> schema.HierarchyLevel:
+        """Helper function to construct unit level data.
+
+        Unit data can be specified as a pre-constructed model, by passing literals, or
+        by signalling to use the data from the user's current role. If all three
+        options are unset an exception is raised.
+
+        There is a strict priority ordering as follows:
+            1. pre-constructed pydantic model
+            2. literals
+            3. default data
+
+        Returns:
+            Constructed unit level data, as a pydantic model.
+            e.g.:
+                HierarchyLevel(id=..., level="...")
+
+        Raises:
+            ValueError:
+                When no unit data information has been provided
+
+        """
+        if unit_level is not None:
+            data = unit_level
+        elif id is not None and level is not None:
+            data = schema.HierarchyLevel(id=_id, level=level)
+        elif use_default:
+            data = self.session.hierarchy  # as this is a property, it will update when roles change
+        else:
+            raise ValueError("No level data specified! unit_level, id and level, or use_default must be set!")
+
+        logger.debug(f"found unit data: id: {unit_level.id}, level: {unit_level.level}")
+
+        return data
 
     # See recurseRetrieve in PGS\Needle
-    def get_hierarchy(self, compass_id: int, level: TYPES_HIERARCHY_LEVEL) -> Union[dict, schema.UnitData]:
-        """Recursively get all children from given unit ID and level, with caching."""
-        filename = Path(f"hierarchy-{compass_id}.json")
+    def get_hierarchy(
+        self,
+        unit_level: Optional[schema.HierarchyLevel] = None,
+        unit_id: Optional[int] = None,
+        level: Optional[str] = None,
+        use_default: bool = False,
+    ) -> Union[dict, schema.UnitData]:
+        """Gets all units at given level and below, including sections.
+
+        Unit data can be specified as a pre-constructed model, by passing literals, or
+        by signalling to use the data from the user's current role. If all three
+        options are unset an exception is raised.
+
+        There is a strict priority ordering as follows:
+            1. pre-constructed pydantic model
+            2. literals
+            3. default data
+
+        Raises:
+            ValueError:
+                When no unit data information has been provided
+
+        """
+        unit_level = self.get_unit_data(unit_level, unit_id, level, use_default)
+
+        filename = Path(f"hierarchy-{unit_level.id}.json")
         # Attempt to see if the hierarchy has been fetched already and is on the local system
         with contextlib.suppress(FileNotFoundError):
             out = json.loads(filename.read_text(encoding="utf-8"))
@@ -58,7 +123,7 @@ class Hierarchy:
                     return out
 
         # Fetch the hierarchy
-        out = self._get_descendants_recursive(compass_id, hier_level=level)
+        out = self._get_descendants_recursive(unit_level.id, hier_level=unit_level.level)
 
         # Try and write to a file for caching
         try:
@@ -76,7 +141,7 @@ class Hierarchy:
 
     # See recurseRetrieve in PGS\Needle
     def _get_descendants_recursive(
-        self, compass_id: int, hier_level: Optional[TYPES_HIERARCHY_LEVEL] = None, hier_num: Optional[Levels] = None
+        self, compass_id: int, hier_level: Optional[TYPES_UNIT_LEVELS] = None, hier_num: Optional[Levels] = None
     ) -> dict[str, Union[int, str, None]]:
         """Recursively get all children from given unit ID and level name/number, with caching."""
         if hier_level is hier_num is None:
@@ -124,10 +189,36 @@ class Hierarchy:
 
         return flatten(hierarchy_dict, {})
 
-    def get_unique_members(self, compass_id: int, level: TYPES_HIERARCHY_LEVEL) -> set[int]:
-        """Get all unique members for a given level and its descendants."""
+    def get_unique_members(
+        self,
+        unit_level: Optional[schema.HierarchyLevel] = None,
+        unit_id: Optional[int] = None,
+        level: Optional[str] = None,
+        use_default: bool = False,
+    ) -> set[int]:
+        """Get all unique members for a given level and its descendants.
+
+        Unit data can be specified as a pre-constructed model, by passing literals, or
+        by signalling to use the data from the user's current role. If all three
+        options are unset an exception is raised.
+
+        There is a strict priority ordering as follows:
+            1. pre-constructed pydantic model
+            2. literals
+            3. default data
+
+        Returns:
+            A set of unique member numbers within the given unit.
+
+        Raises:
+            ValueError:
+                When no unit data information has been provided
+
+        """
+        unit_level = self.get_unit_data(unit_level, unit_id, level, use_default)
+
         # get tree of all units
-        hierarchy_dict = self.get_hierarchy(compass_id, level)
+        hierarchy_dict = self.get_hierarchy(unit_level)
 
         if self.validate:
             hierarchy_dict = hierarchy_dict.dict()
@@ -139,7 +230,7 @@ class Hierarchy:
         compass_ids = (unit["compass"] for unit in flat_hierarchy)
 
         # get members from the list of IDs
-        units_members = self.get_members_in_units(compass_id, compass_ids)
+        units_members = self.get_members_in_units(unit_level.id, compass_ids)
 
         # return a set of membership numbers
         return {members["contact_number"] for unit_members in units_members for members in unit_members["member"]}
