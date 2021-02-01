@@ -1,138 +1,124 @@
 # pylint: disable=protected-access
 
 import datetime
-from pathlib import Path
-import re
-from typing import Tuple
+import enum
+from typing import Literal
 
-from lxml import html
-
+from compass._scrapers.reports import ReportsScraper
+from compass.errors import CompassReportError
 from compass.logging import logger
 from compass.logon import Logon
 from compass.settings import Settings
 
-# TODO Enum???
-report_types = {
-    "Region Member Directory": 37,
-    "Region Appointments Report": 52,
-    "Region Permit Report": 72,
-    "Region Disclosure Report": 76,
-    "Region Training Report": 84,
-    "Region Disclosure Management Report": 100,
-}
+TYPES_REPORTS = Literal[
+    "Region Member Directory",
+    "Region Appointments Report",
+    "Region Permit Report",
+    "Region Disclosure Report",
+    "Region Training Report",
+    "Region Disclosure Management Report",
+]
 
 
-class CompassReportError(Exception):
-    pass
+class ReportTypes(enum.IntEnum):
+    region_member_directory = 37
+    region_appointments_report = 52
+    region_permit_report = 72
+    region_disclosure_report = 76
+    region_training_report = 84
+    region_disclosure_management_report = 100
 
 
-class CompassReportPermissionError(PermissionError, Exception):
-    pass
+class Reports:
+    def __init__(self, session: Logon):
+        """Constructor for Reports."""
+        self._scraper = ReportsScraper(session.s)
+        self._scraper._get = session._get  # massively hacky but we need to send the jk_hash stuff through
+        self.session: Logon = session
 
+    def get_report(self, report_type: TYPES_REPORTS) -> bytes:
+        """Exports report as CSV from Compass.
 
-def get_report_token(logon: Logon, report_number: int) -> str:
-    params = {
-        "pReportNumber": report_number,
-        "pMemberRoleNumber": f"{logon.mrn}",
-    }
-    logger.debug("Getting report token")
-    response = logon._get(f"{Settings.base_url}{Settings.web_service_path}/ReportToken", auth_header=True, params=params)
+        Exporting a report is of course surprisingly complicated. The process
+        has four major steps, as follows:
 
-    response.raise_for_status()
-    report_token_uri = response.json().get("d")
+        1. Get a token for generating the report from the Compass backend. This
+            also validates that the report exists and that the user is
+            authenticated to access it.
+        2. If successful in obtaining a report token, get the initial report
+            page. The token is the (relative) URL here, and the report page
+            contains further needed information, such as the export URL and
+            location data for a full export.
+            (Compass does not include all organisational units in reports by
+            default, and to export all data for a given unit and downwards, we
+            need to add in these missing/unset levels manually).
+        3. We update report configuration data (sent as form data), and check
+            that we are not in an error state.
+        4. We extract the export URL, download the content and save to disk.
 
-    if report_token_uri in ["-1", "-2", "-3", "-4"]:
-        msg = ""
-        if report_token_uri in ["-2", "-3"]:
-            msg = "Report No Longer Available"
-        elif report_token_uri == "-4":
-            msg = "USER DOES NOT HAVE PERMISSION"
+        Pitfalls to be aware of in this process include that:
+        - Compass checks user-agent headers in some parts of the process
+            (TODO pinpoint which exactly)
+        - There is a ten (10) minute default soft-timeout, which may run out
+            before a report download has finished
+        - If a requested report is too large, Compass can simply give up, often
+            with an `OutOfMemory` error or similar
 
-        raise CompassReportError(f"Report aborted: {msg}")
+        Returns:
+            Report output, as a bytes-encoded object.
 
-    return report_token_uri
+        Raises:
+            CompassReportError:
+                - If the user passes an invalid report type
+                - If Compass returns a JSON error
+                - If there is an error updating the form data
+            CompassReportPermissionError:
+                If the user does not have permission to run the report
+            requests.HTTPError:
+                If there is an error in the transport layer, or if Compass
+                reports a HTTP 5XX status code
 
+        """
+        # Get token for report type & role running said report:
+        try:
+            # report_type is given as `Title Case` with spaces, enum keys are in `snake_case`
+            rt_key = report_type.lower().replace(" ", "_")
+            run_report_url = self._scraper.get_report_token(ReportTypes[rt_key].value, self.session.mrn)
+        except KeyError:
+            # enum keys are in `snake_case`, output types as `Title Case` with spaces
+            types = [rt.name.title().replace("_", " ") for rt in ReportTypes]
+            raise CompassReportError(f"{report_type} is not a valid report type. Existing report types are {types}") from None
 
-def get_report_export_url(report_page: str, filename: str = None) -> Tuple[str, dict]:
-    full_url = re.search(r'"ExportUrlBase":"(.*?)"', report_page).group(1).encode().decode("unicode-escape")
-    export_url_path = full_url.split("?")[0][1:]
-    report_export_url_data = dict(param.split("=") for param in full_url.split("?")[1].split("&"))
-    report_export_url_data["Format"] = "CSV"
-    if filename:
-        report_export_url_data["FileName"] = filename
+        # Get initial reports page, for export URL and config:
+        report_page = self._scraper.get_report_page(run_report_url)
 
-    return export_url_path, report_export_url_data
+        # Update form data & set location selection:
+        self._scraper.update_form_data(report_page, f"{Settings.base_url}/{run_report_url}")
 
+        # Export the report:
+        logger.info("Exporting report")
+        export_url_path, export_url_params = self._scraper.get_report_export_url(report_page.decode("UTF-8"))
 
-def get_report(logon: Logon, report_type: str) -> bytes:
-    # GET Report Page
-    # POST Location Update
-    # GET CSV data
+        # TODO Debug check
+        time_string = datetime.datetime.now().replace(microsecond=0).isoformat().replace(":", "-")  # colons are illegal on windows
+        filename = f"{time_string} - {self.session.cn} ({self.session.current_role}).csv"
 
-    if report_type not in report_types:
-        raise CompassReportError(f"{report_type} is not a valid report type. Existing report types are {', '.join(report_types)}")
+        # start = time.time()
+        # TODO TRAINING REPORT ETC.
+        # # TODO REPORT BODY HAS KEEP ALIVE URL KeepAliveUrl
+        # p = PeriodicTimer(15, lambda: self.report_keep_alive(self.session, report_page.text))
+        # self.session.sto_thread.start()
+        # p.start()
+        # # ska_url = self.report_keep_alive(self.session, report_page.text)
+        # try:
+        #     self.download_report(self.session, f"{Settings.base_url}/{export_url_path}", export_url_params, filename, )  # ska_url
+        # except (ConnectionResetError, requests.ConnectionError):
+        #     logger.info(f"Stopped at {datetime.datetime.now()}")
+        #     p.cancel()
+        #     self.session.sto_thread.cancel()
+        #     raise
+        # logger.debug(f"Exporting took {time.time() -start}s")
 
-    run_report_url = get_report_token(logon, report_types[report_type])
+        csv_export = self._scraper.download_report_normal(f"{Settings.base_url}/{export_url_path}", export_url_params, filename)
 
-    # Compass does user-agent sniffing in reports!!!
-    logon._update_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-
-    logger.info("Generating report")
-    run_report = f"{Settings.base_url}/{run_report_url}"
-    report_page = logon._get(run_report)
-    tree = html.fromstring(report_page.content)
-    form: html.FormElement = tree.forms[0]
-
-    elements = {el.name: el.value for el in form.inputs if el.get("type") not in {"checkbox", "image"}}
-
-    # Table Controls: table#ParametersGridReportViewer1_ctl04
-    # ReportViewer1$ctl04$ctl03$ddValue - Region/County(District) Label
-    # ReportViewer1$ctl04$ctl05$txtValue - County Label
-    # ReportViewer1$ctl04$ctl07$txtValue - District Label
-    # ReportViewer1$ctl04$ctl09$txtValue - Role Types (Status)
-    # ReportViewer1$ctl04$ctl15$txtValue - Columns Label
-
-    # ReportViewer1_ctl04_ctl07_divDropDown - Districts
-    # ReportViewer1_ctl04_ctl05_divDropDown - Counties
-    # ReportViewer1_ctl04_ctl09_divDropDown - Role Types
-    # ReportViewer1_ctl04_ctl15_divDropDown - Columns
-
-    form_data = {
-        "__VIEWSTATE": elements["__VIEWSTATE"],
-        "ReportViewer1$ctl04$ctl05$txtValue": "Regional Roles",
-        "ReportViewer1$ctl04$ctl05$divDropDown$ctl01$HiddenIndices": "0",
-    }
-
-    # districts = tree.xpath("//div[@id='ReportViewer1_ctl04_ctl07_divDropDown']//label/text()")
-    # numbered_districts = {str(i): unicodedata.normalize("NFKD", d) for i, d in enumerate(districts[1:])}
-    # all_districts = ", ".join(numbered_districts.values())
-    # all_districts_indices = ",".join(numbered_districts.keys())
-    #
-    # form_data = {
-    #     "__VIEWSTATE": elements["__VIEWSTATE"],
-    #     "ReportViewer1$ctl04$ctl07$txtValue": all_districts,
-    #     "ReportViewer1$ctl04$ctl07$divDropDown$ctl01$HiddenIndices": all_districts_indices,
-    # }
-
-    # Including MicrosoftAJAX: Delta=true reduces size by ~1kb but increases time by 0.01s.
-    # In reality we don't care about the output of this POST, just that it doesn't fail
-    report = logon._post(run_report, data=form_data, headers={"X-MicrosoftAjax": "Delta=true"})
-    report.raise_for_status()
-
-    if "compass.scouts.org.uk%2fError.aspx|" in report.text:
-        raise CompassReportError("Compass Error!")
-
-    logger.info("Exporting report")
-    export_url_path, export_url_params = get_report_export_url(report_page.text)
-    csv_export = logon._get(f"{Settings.base_url}/{export_url_path}", params=export_url_params)
-
-    # TODO Debug check
-    logger.info("Saving report")
-    time_string = datetime.datetime.now().replace(microsecond=0).isoformat().replace(":", "-")  # colons are illegal on windows
-    filename = f"{time_string} - {logon.cn} ({logon.current_role}).csv"
-    Path(filename).write_bytes(csv_export.content)  # TODO Debug check
-
-    logger.debug(len(csv_export.content))
-    logger.info("Report Saved")
-
-    return csv_export.content
+        return csv_export

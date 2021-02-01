@@ -3,6 +3,7 @@ import ctypes
 import datetime
 import functools
 from pathlib import Path
+import threading
 from typing import Any, Optional, Union
 
 import certifi
@@ -93,3 +94,28 @@ def parse(date_time_str: str) -> Optional[datetime.datetime]:
             return datetime.datetime.strptime(date_time_str, "%d %B %Y")  # e.g. 01 January 2000
         except ValueError:
             return datetime.datetime.strptime(date_time_str, "%d %b %Y")  # e.g. 01 Jan 2000
+
+
+class PeriodicTimer:
+    def __init__(self, interval, callback):
+        """Constructor for PeriodicTimer."""
+        self.thread = None
+        self.interval = interval
+
+        @functools.wraps(callback)
+        def wrapper(*args, **kwargs):
+            result = callback(*args, **kwargs)
+            if result is not None:
+                self.thread = threading.Timer(self.interval, self.callback)
+                self.thread.start()
+
+        self.callback = wrapper
+
+    def start(self):
+        self.thread = threading.Thread(target=self.callback)
+        self.thread.start()
+        return self
+
+    def cancel(self):
+        self.thread.cancel()
+        return self
