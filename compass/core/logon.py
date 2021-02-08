@@ -2,7 +2,6 @@ import datetime
 import time
 from typing import Literal
 
-import certifi
 from lxml import html
 import requests
 
@@ -15,7 +14,6 @@ from compass.core.settings import Settings
 from compass.core.utility import cast
 from compass.core.utility import compass_restify
 from compass.core.utility import PeriodicTimer
-from compass.core.utility import setup_tls_certs
 
 TYPES_UNIT_LEVELS = Literal["Group", "District", "County", "Region", "Country", "Organisation"]
 TYPES_STO = Literal[None, "0", "5", "X"]
@@ -26,8 +24,7 @@ class Logon(InterfaceBase):
 
     Logon flow is:
     1. Create a persistent state object (Session) to hold headers, cookies etc.
-      a. Check and verify that TLS certificates for Compass have been set up.
-      b. Get ASP.NET session cookie from Compass. (HTTP request #1)
+      a. Get ASP.NET session cookie from Compass. (HTTP request #1)
     2. Post login data to Compass. (HTTP request #2)
     3. Get sample page from Compass. (HTTP request #3)
     4. Verify login was successful
@@ -142,13 +139,6 @@ class Logon(InterfaceBase):
     def _create_session() -> requests.Session:
         """Create a session and get ASP.Net Session ID cookie from the compass server."""
         session = requests.Session()
-
-        # Setup SSL - see utility for reasoning
-        setup_tls_certs()
-        if certifi.where():
-            session.verify = True
-        else:
-            raise RuntimeError("Certificates not loaded")
 
         session.head(f"{Settings.base_url}/")  # use .head() as only headers needed to grab session cookie
 
