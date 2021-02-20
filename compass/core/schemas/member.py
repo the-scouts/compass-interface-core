@@ -147,7 +147,7 @@ TYPES_PERMIT_CATEGORIES = Literal[
     "Without Compound Bows",
 ]
 TYPES_PERMIT_TYPE = Literal["Leadership", "Supervisory"]
-TYPES_DISCLOSURE_PROVIDERS = Literal["Atlantic Data", "DBS Paper Application", "Other"]
+TYPES_DISCLOSURE_PROVIDERS = Literal["Atlantic Data", "DBS Paper Application", "Disclosure Scotland", "Other"]
 TYPES_DISCLOSURE_STATUSES = Literal[
     "Application Withdrawn",
     "Application submitted - in progress",
@@ -367,17 +367,16 @@ class MemberTrainingPLP(pydantic.BaseModel):
 
 # Training Tab (OGL - item)
 class MemberMOGL(pydantic.BaseModel):
-    name: Literal["GDPR", "Safeguarding", "Safety", "First Aid"]
     completed_date: Optional[datetime.date]
     renewal_date: Optional[datetime.date]  # GDPR has no renewal date...??
 
 
 # Training Tab (OGL - all)
 class MemberMOGLList(pydantic.BaseModel):
-    SA: Optional[MemberMOGL]
-    SG: Optional[MemberMOGL]
-    FA: Optional[MemberMOGL]
-    GDPR: Optional[MemberMOGL]
+    safety: MemberMOGL
+    safeguarding: MemberMOGL
+    first_aid: MemberMOGL
+    gdpr: MemberMOGL
 
 
 # Training Tab
@@ -402,7 +401,8 @@ MemberPermitsList = MemberGenericList[MemberPermit]
 
 
 class MemberDisclosure(pydantic.BaseModel):
-    country: Optional[Literal["England & Wales", "The Scout Association"]]  # TODO Scot, Wales, NI, BSO, Branches, Channel Islands
+    # TODO Scot, Wales, NI, BSO, Branches, Channel Islands
+    country: Optional[Literal["England & Wales", "Scotland", "The Scout Association"]]
     provider: TYPES_DISCLOSURE_PROVIDERS
     type: Literal["Enhanced with Barring"]
     number: Optional[int]  # If Application Withdrawn, no disclosure number
