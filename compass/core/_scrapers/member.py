@@ -61,6 +61,8 @@ class PeopleScraper(InterfaceBase):
 
         takes an initialised Session object from Logon
         """
+        # pylint: disable=useless-super-delegation
+        # Want to keep this method for future use
         super().__init__(session)
 
     def _get_member_profile_tab(self, membership_num: int, profile_tab: MEMBER_PROFILE_TAB_TYPES) -> bytes:
@@ -343,6 +345,9 @@ class PeopleScraper(InterfaceBase):
 
         """
         # pylint: disable=too-many-locals,too-many-statements
+        # Want to keep all functionality in one place, to reduce the number of
+        # calls to Compass.
+        # TODO could refactor some internals into helper functions
         response = self._get_member_profile_tab(membership_num, "Training")
         tree = html.fromstring(response)
 
@@ -507,6 +512,34 @@ class PeopleScraper(InterfaceBase):
 
         return schema.MemberPermitsList.parse_obj(permits)
 
+    def get_disclosures_tab(self, membership_num: int) -> list[schema.MemberDisclosure]:
+        response = self._get_member_profile_tab(membership_num, "Disclosures")
+        tree = html.fromstring(response)
+
+        if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
+            raise PermissionError(f"You do not have permission to the details of {membership_num}")
+
+        disclosures = []
+        rows = tree.xpath("//tbody/tr")
+        for row in rows:
+            # Get children (cells in row)
+            cells = list(row)
+
+            disclosure = schema.MemberDisclosure(
+                country=cells[0].text_content() or None,  # Country sometimes missing (Application Withdrawn)
+                provider=cells[1].text_content(),
+                type=cells[2].text_content(),
+                number=cells[3].text_content() or None,  # If Application Withdrawn, no disclosure number
+                issuer=cells[4].text_content() or None,
+                issue_date=parse(cells[5].text_content()),  # If Application Withdrawn, maybe no issue date
+                status=cells[6].text_content(),
+                expiry_date=parse(cells[7].text_content()),  # If Application Withdrawn, no expiry date
+            )
+
+            disclosures.append(disclosure)
+
+        return disclosures
+
     # See getAppointment in PGS\Needle
     def get_roles_detail(
         self, role_number: int, response: Union[None, str, bytes, requests.Response] = None
@@ -558,6 +591,9 @@ class PeopleScraper(InterfaceBase):
 
         """
         # pylint: disable=too-many-locals,too-many-statements
+        # Want to keep all functionality in one place, to reduce the number of
+        # calls to Compass.
+        # TODO could refactor some internals into helper functions
         renamed_levels = {
             "County / Area / Scottish Region / Overseas Branch": "County",
         }

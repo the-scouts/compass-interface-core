@@ -170,7 +170,7 @@ class Hierarchy:
         return descendant_data
 
     @staticmethod
-    def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[dict[str, Union[int, str]]]:
+    def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[dict[str, Union[int, str]]]:  # noqa: D417
         """Flattens a hierarchy tree / graph to a flat sequence of mappings.
 
         Args:
@@ -179,7 +179,8 @@ class Hierarchy:
                 object, whilst all recursion will be on `schema.DescendantData` objects.
 
         """
-
+        # This args style is allowed, but not yet (2021-02-20) implemented in PyDocStyle, so D417 disabled above.
+        # https://github.com/PyCQA/pydocstyle/issues/449
 
         def flatten(
             d: Union[schema.UnitData, schema.DescendantData], hierarchy_state: dict[str, Union[int, str]]
@@ -251,7 +252,7 @@ class Hierarchy:
             # Attempt to see if the members dict has been fetched already and is on the local system
             all_members = json.loads(filename.read_text(encoding="utf-8"))
             if isinstance(all_members, list):
-                return all_members
+                return [schema.HierarchyUnitMembers(**unit_members) for unit_members in all_members]
 
         # Fetch all members
         all_members = []

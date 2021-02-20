@@ -38,6 +38,8 @@ class HierarchyScraper(InterfaceBase):
 
         takes an initialised Session object from Logon
         """
+        # pylint: disable=useless-super-delegation
+        # Want to keep this method for future use
         super().__init__(session)
 
     # see CompassClient::retrieveLevel or retrieveSections in PGS\Needle php

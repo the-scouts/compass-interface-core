@@ -6,6 +6,8 @@ logger = logging.getLogger("compass_interface")
 def enable_debug_logging() -> None:
     import sys  # pylint: disable=import-outside-toplevel
 
+    # Only want to import sys if needed
+
     logger.setLevel(logging.DEBUG)
 
     formatter = logging.Formatter(fmt="{asctime}.{msecs:03.0f} ({levelname}): {message}", datefmt="%Y-%m-%d %H:%M:%S", style="{")
