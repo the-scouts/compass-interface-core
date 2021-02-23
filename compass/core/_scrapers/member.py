@@ -53,7 +53,7 @@ class PeopleScraper(InterfaceBase):
     Of these, tabs 2, 7, 8, 13 are disabled functionality.
     Tab 11 (Visibility) is only shown on the members' own profile.
 
-    For member-adjdacent operations there are additional endpoints:
+    For member-adjacent operations there are additional endpoints:
      - /Popups/Profile/AssignNewRole.aspx
      - /Popups/Maint/NewPermit.aspx
      - /Popups/Profile/EditProfile.aspx
@@ -118,21 +118,25 @@ class PeopleScraper(InterfaceBase):
             data tab.
 
             For example:
-            {'membership_number': ...,
-             'forenames': '...',
-             'surname': '...',
-             'main_phone': '...',
-             'main_email': '...',
-             'name': '...',
-             'known_as': '...',
-             'join_date': datetime.datetime(...),
-             'sex': '...',
-             'birth_date': datetime.datetime(...),
-             'nationality': '...',
-             'ethnicity': '...',
-             'religion': '...',
-             'occupation': '...',
-             'address': '...'}
+            MemberDetails(
+                membership_number=...,
+                name="...",
+                known_as="...",
+                forenames="...",
+                surname="...",
+                birth_date=datetime.date(...),
+                sex="...",
+                nationality="...",
+                ethnicity="...",
+                religion="...",
+                occupation="...",
+                join_date=datetime.date(...),
+                postcode="...",
+                main_phone="...",
+                main_email="..."
+                address=...
+            )
+
 
             Keys will be present only if valid data could be extracted and
             parsed from Compass.
@@ -195,7 +199,20 @@ class PeopleScraper(InterfaceBase):
         # Occupation
         details["occupation"] = tree.xpath("normalize-space(//*[@id='divProfile0']//*[text()='Occupation:']/../../td[2])")
         # Address
-        details["address"] = tree.xpath('string(//*[text()="Address"]/../../../td[3])')
+        address = tree.xpath('string(//*[text()="Address"]/../../../td[3])')
+        addr_main, addr_code = address.rsplit(". ", 1)
+        postcode, country = addr_code.rsplit(" ", 1)  # Split Postcode & Country
+        try:
+            street, town, county = addr_main.rsplit(", ", 2)  # Split address lines
+        except ValueError:
+            street, town = addr_main.rsplit(", ", 1)
+            county = None
+        details["address"] = address
+        details["country"] = country
+        details["postcode"] = postcode
+        details["county"] = county
+        details["town"] = town
+        details["street"] = street
 
         # Filter out keys with no value.
         details = {k: v for k, v in details.items() if v}
