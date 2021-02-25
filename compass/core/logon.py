@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import time
 from typing import Any, Literal, Optional, TYPE_CHECKING, Union
+import urllib.parse
 
 from lxml import html
 import requests
@@ -12,6 +13,7 @@ from compass.core.errors import CompassAuthenticationError
 from compass.core.errors import CompassError
 from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
+import compass.core.schemas.logon as schema
 from compass.core.settings import Settings
 from compass.core.utility import cast
 from compass.core.utility import compass_restify
@@ -54,45 +56,72 @@ class Logon(InterfaceBase):
 
     """
 
-    def __init__(self, credentials: tuple[str, str], role_to_use: Optional[str] = None, role_location: Optional[str] = None):
+    def __init__(
+        self,
+        credentials: Optional[tuple[str, str]] = None,
+        role_to_use: Optional[str] = None,
+        role_location: Optional[str] = None,
+        session: Optional[requests.Session] = None,
+    ):
         """Constructor for Logon."""
-        self._member_role_number = 0
-        self.compass_dict: dict[str, Union[int, str]] = {}
+        self.compass_props: schema.CompassProps
 
         self.current_role: tuple[str, str] = ("", "")
-        self.roles_dict: dict[int, str] = {}
+        self.roles_dict: dict[int, tuple[str, str]] = {}
 
         # Create session
-        super().__init__(self._create_session())
+        if session is not None:
+            super().__init__(session)
+        elif credentials is not None:
+            super().__init__(self._create_session())
 
-        # Log in and try to confirm success
-        self._logon_remote(credentials)
+            # Log in and try to confirm success
+            self._logon_remote(credentials)
 
-        if role_to_use is not None:
-            # Session contains updated auth headers from role change
-            self.change_role(role_to_use, role_location)
+            if role_to_use is not None:
+                # Session contains updated auth headers from role change
+                self.change_role(role_to_use, role_location)
+        else:
+            raise CompassError("compass.core.Logon must be initialised with credentials or an existing session object!")
 
         self.sto_thread = PeriodicTimer(150, self._extend_session_timeout)
         # self.sto_thread.start()
+
+    @classmethod
+    def from_session(cls, asp_net_id: str, user_props: dict[str, Union[str, int]], current_role: tuple[str, str]) -> Logon:
+        session = requests.Session()
+
+        session.cookies.set("ASP.NET_SessionId", asp_net_id, domain=Settings.base_domain)
+        logon = cls(session=session)
+        logon.compass_props = schema.CompassProps(**{"master": {"user": dict(user_props)}})
+        logon.current_role = current_role
+
+        logon._update_auth_headers(logon.cn, logon.mrn, logon._session_id)  # pylint: disable=protected-access
+
+        return logon
+
+    def __repr__(self) -> str:
+        """String representation of the Logon class."""
+        return f"{self.__class__} Compass ID: {self.cn} ({' - '.join(self.current_role)})"
 
     # properties/accessors code:
 
     @property
     def mrn(self) -> int:
-        return self.compass_dict["Master.User.MRN"]  # Member Role Number
+        return self.compass_props.master.user.mrn  # Member Role Number
 
     @property
     def cn(self) -> int:
-        return self.compass_dict["Master.User.CN"]  # Contact Number
+        return self.compass_props.master.user.cn  # Contact Number
 
     @property
-    def jk(self) -> int:
-        return self.compass_dict["Master.User.JK"]  # ???? Key?  # Join Key??? SHA2-512
+    def jk(self) -> str:
+        return self.compass_props.master.user.jk  # ???? Key?  # Join Key??? SHA2-512
 
     @property
     def hierarchy(self) -> schemas.hierarchy.HierarchyLevel:
-        unit_number = self.compass_dict["Master.User.ON"]  # Organisation Number
-        unit_level = self.compass_dict["Master.User.LVL"]  # Level
+        unit_number = self.compass_props.master.user.on  # Organisation Number
+        unit_level = self.compass_props.master.user.lvl  # Level
         level_map = {
             "ORG": "Organisation",
             # "ORST": "Organisation Sections",
@@ -109,6 +138,14 @@ class Logon(InterfaceBase):
         }
 
         return schemas.hierarchy.HierarchyLevel(id=unit_number, level=level_map[unit_level])
+
+    @property
+    def _asp_net_id(self) -> str:
+        return self.s.cookies["ASP.NET_SessionId"]
+
+    @property
+    def _session_id(self) -> str:
+        return self.compass_props.master.sys.session_id
 
     # _get override code:
 
@@ -215,15 +252,11 @@ class Logon(InterfaceBase):
         form = html.fromstring(response.content).forms[0]
 
         # Update session dicts with new role
-        self.compass_dict = self._create_compass_dict(form)  # Updates MRN property etc.
+        self.compass_props = self._create_compass_props(form)  # Updates MRN property etc.
         self.roles_dict = dict(self._roles_iterator(form))
 
         # Set auth headers for new role
-        auth_headers = {
-            "Authorization": f"{self.cn}~{self.mrn}",
-            "SID": self.compass_dict["Master.Sys.SessionID"],  # Session ID
-        }
-        self._update_headers(auth_headers)
+        self._update_auth_headers(self.cn, self.mrn, self._session_id)
 
         # Update current role properties
         self.current_role = self.roles_dict[self.mrn]
@@ -236,16 +269,34 @@ class Logon(InterfaceBase):
             if check_role_number != self.mrn:
                 raise CompassAuthenticationError("Role failed to update in Compass")
 
+    def _update_auth_headers(self, membership_number: int, role_number: int, session_id: str) -> None:
+        auth_headers = {
+            "Authorization": f"{membership_number}~{role_number}",
+            "SID": session_id,  # Session ID
+        }
+        self._update_headers(auth_headers)
+
     @staticmethod
-    def _create_compass_dict(form_tree: html.FormElement) -> dict[str, Union[int, str]]:
+    def _create_compass_props(form_tree: html.FormElement) -> schema.CompassProps:
         """Create Compass info dict from FormElement."""
-        compass_dict = {}
+        compass_props = {}
         compass_vars = form_tree.fields["ctl00$_POST_CTRL"]
         for pair in compass_vars.split("~"):
             key, value = pair.split("#", 1)
-            compass_dict[key] = cast(value)  # int or str
+            cd_tmp = compass_props
+            levels = key.split(".")
+            for level in levels[:-1]:
+                cd_tmp = cd_tmp.setdefault(level, {})
+            cd_tmp[levels[-1]] = cast(value)  # int or str
 
-        return compass_dict
+        if "Sys" in compass_props.get("Master", {}):
+            cp_m_s = compass_props["Master"]["Sys"]
+            if "WebPath" in cp_m_s:
+                cp_m_s["WebPath"] = urllib.parse.unquote(cp_m_s["WebPath"])
+            if "HardTime" in cp_m_s:
+                cp_m_s["HardTime"] = datetime.time.fromisoformat(cp_m_s["HardTime"].replace(".", ":"))
+
+        return schema.CompassProps(**compass_props)
 
     @staticmethod
     def _roles_iterator(form_tree: html.FormElement) -> Iterator[tuple[int, tuple[str, str]]]:
@@ -263,6 +314,10 @@ class Logon(InterfaceBase):
         logger.info("Changing role")
 
         new_role = new_role.strip()
+
+        # If we don't have the roles dict, generate it.
+        if not self.roles_dict:
+            self._verify_success_update_properties()
 
         # Change role to the specified role number
         if location is not None:
