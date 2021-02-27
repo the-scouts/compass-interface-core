@@ -88,10 +88,9 @@ class PeopleScraper(InterfaceAuthenticated):
             Both keys will always be present.
 
         Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
             ValueError: The given profile_tab value is illegal
-
-        Todo:
-            Other possible exceptions? i.e. from Requests
 
         """
         tab_upper: str = profile_tab.upper()  # No longer type MEMBER_PROFILE_TAB_TYPES as upper case
@@ -117,7 +116,7 @@ class PeopleScraper(InterfaceAuthenticated):
             A dict mapping keys to the corresponding data from the personal
             data tab.
 
-            For example:
+            E.g.:
             MemberDetails(
                 membership_number=...,
                 name="...",
@@ -142,11 +141,10 @@ class PeopleScraper(InterfaceAuthenticated):
             parsed from Compass.
 
         Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
             PermissionError:
                 Access to the member is not given by the current authentication
-
-        Todo:
-            Other possible exceptions? i.e. from Requests
 
         """
         response = self._get_member_profile_tab(membership_num, "Personal")
@@ -229,6 +227,7 @@ class PeopleScraper(InterfaceAuthenticated):
         Args:
             membership_num: Membership Number to use
             keep_non_volunteer_roles: Keep Helper (OH/PVG) & Network roles?
+            statuses: Explicit set of role statuses to keep
 
         Returns:
             A dict of dicts mapping keys to the corresponding data from the roles tab.
@@ -252,11 +251,12 @@ class PeopleScraper(InterfaceAuthenticated):
             Keys will always be present.
 
         Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
             PermissionError:
                 Access to the member is not given by the current authentication
 
         Todo:
-            Other possible exceptions? i.e. from Requests
             primary_role
 
         """
@@ -318,6 +318,48 @@ class PeopleScraper(InterfaceAuthenticated):
         with validation_errors_logging(membership_num):
             return schema.MemberRolesDict.parse_obj(roles_data)
 
+    def get_permits_tab(self, membership_num: int) -> schema.MemberPermitsList:
+        """Returns data from Permits tab for a given member.
+
+        If a permit has been revoked, the expires value is None and the status is PERM_REV
+
+        Args:
+            membership_num: Membership Number to use
+
+        Returns:
+            A list of dicts mapping keys to the corresponding data from the
+            permits tab.
+
+            Keys will always be present.
+
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
+
+        """
+        response = self._get_member_profile_tab(membership_num, "Permits")
+        tree = html.fromstring(response)
+
+        # Get rows with permit content
+        rows = tree.xpath('//table[@id="tbl_p4_permits"]//tr[@class="msTR msTRPERM"]')
+
+        permits = []
+        for row in rows:
+            permit: dict[str, Union[None, int, str, datetime.date]] = dict(membership_number=membership_num)
+            child_nodes = list(row)
+            permit["permit_type"] = child_nodes[1].text_content()
+            permit["category"] = child_nodes[2].text_content()
+            permit["type"] = child_nodes[3].text_content()
+            permit["restrictions"] = child_nodes[4].text_content()
+            expires = child_nodes[5].text_content()
+            permit["expires"] = parse(expires) if expires != "Revoked" else None
+            permit["status"] = child_nodes[5].get("class")
+
+            permits.append(permit)
+
+        with validation_errors_logging(membership_num):
+            return schema.MemberPermitsList.parse_obj(permits)
+
     @overload
     def get_training_tab(self, membership_num: int, ongoing_only: Literal[True]) -> schema.MemberMOGLList:
         ...
@@ -373,8 +415,9 @@ class PeopleScraper(InterfaceAuthenticated):
 
             Keys will always be present.
 
-        Todo:
-            Other possible exceptions? i.e. from Requests
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
 
         """
         # pylint: disable=too-many-locals,too-many-statements
@@ -500,48 +543,30 @@ class PeopleScraper(InterfaceAuthenticated):
         with validation_errors_logging(membership_num):
             return schema.MemberTrainingTab.parse_obj(training_data)
 
-    def get_permits_tab(self, membership_num: int) -> schema.MemberPermitsList:
-        """Returns data from Permits tab for a given member.
-
-        If a permit has been revoked, the expires value is None and the status is PERM_REV
+    def get_awards_tab(self, membership_num: int) -> list[schema.MemberAward]:
+        """Returns data from Awards tab for a given member.
 
         Args:
             membership_num: Membership Number to use
 
         Returns:
-            A list of dicts mapping keys to the corresponding data from the
-            permits tab.
+            A MemberAward object with corresponding data from the awards tab.
+
+            E.g.:
+            MemberAward(
+                membership_number=...,
+                type="...",
+                location="...",
+                date=datetime.date(...),
+            )
 
             Keys will always be present.
 
-        Todo:
-            Other possible exceptions? i.e. from Requests
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
 
         """
-        response = self._get_member_profile_tab(membership_num, "Permits")
-        tree = html.fromstring(response)
-
-        # Get rows with permit content
-        rows = tree.xpath('//table[@id="tbl_p4_permits"]//tr[@class="msTR msTRPERM"]')
-
-        permits = []
-        for row in rows:
-            permit: dict[str, Union[None, int, str, datetime.date]] = dict(membership_number=membership_num)
-            child_nodes = list(row)
-            permit["permit_type"] = child_nodes[1].text_content()
-            permit["category"] = child_nodes[2].text_content()
-            permit["type"] = child_nodes[3].text_content()
-            permit["restrictions"] = child_nodes[4].text_content()
-            expires = child_nodes[5].text_content()
-            permit["expires"] = parse(expires) if expires != "Revoked" else None
-            permit["status"] = child_nodes[5].get("class")
-
-            permits.append(permit)
-
-        with validation_errors_logging(membership_num):
-            return schema.MemberPermitsList.parse_obj(permits)
-
-    def get_awards_tab(self, membership_num: int) -> list[schema.MemberAward]:
         response = self._get_member_profile_tab(membership_num, "Awards")
         tree = html.fromstring(response)
 
@@ -563,6 +588,35 @@ class PeopleScraper(InterfaceAuthenticated):
         return awards
 
     def get_disclosures_tab(self, membership_num: int) -> list[schema.MemberDisclosure]:
+        """Returns data from Disclosures tab for a given member.
+
+        Args:
+            membership_num: Membership Number to use
+
+        Returns:
+            A MemberAward object with corresponding data from the disclosures
+            tab.
+
+            E.g.:
+            MemberDisclosure(
+                membership_number=...,
+                country="...",
+                provider="...",
+                type="...",
+                number=...,
+                issuer="...",
+                issue_date=datetime.date(...),
+                status="...",
+                expiry_date=datetime.date(...),
+            )
+
+            Keys will always be present.
+
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
+
+        """
         response = self._get_member_profile_tab(membership_num, "Disclosures")
         tree = html.fromstring(response)
 
@@ -636,8 +690,9 @@ class PeopleScraper(InterfaceAuthenticated):
 
             Keys will always be present.
 
-        Todo:
-            Other possible exceptions? i.e. from Requests
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
 
         """
         # pylint: disable=too-many-locals,too-many-statements
@@ -685,34 +740,36 @@ class PeopleScraper(InterfaceAuthenticated):
         else:
             tree = html.fromstring(response.content)
         form = tree.forms[0]
+        inputs = form.inputs
+        fields = form.fields
 
         if form.action == "./ScoutsPortal.aspx?Invalid=Access":
             raise PermissionError(f"You do not have permission to the details of role {role_number}")
 
-        member_string = form.fields.get("ctl00$workarea$txt_p1_membername")
-        ref_code = form.fields.get("ctl00$workarea$cbo_p2_referee_status")
+        member_string = fields.get("ctl00$workarea$txt_p1_membername")
+        ref_code = fields.get("ctl00$workarea$cbo_p2_referee_status")
 
         role_details: dict[str, Union[None, int, str, datetime.date]] = dict()
         # Approval and Role details
         role_details["role_number"] = role_number
-        role_details["organisation_level"] = form.fields.get("ctl00$workarea$cbo_p1_level")
-        role_details["birth_date"] = parse(form.inputs["ctl00$workarea$txt_p1_membername"].get("data-dob"))
-        role_details["membership_number"] = int(form.fields.get("ctl00$workarea$txt_p1_memberno"))
+        role_details["organisation_level"] = fields.get("ctl00$workarea$cbo_p1_level")
+        role_details["birth_date"] = parse(inputs["ctl00$workarea$txt_p1_membername"].get("data-dob")) if Settings.debug else None
+        role_details["membership_number"] = int(fields.get("ctl00$workarea$txt_p1_memberno"))
         role_details["name"] = member_string.split(" ", maxsplit=1)[1]  # TODO does this make sense - should name be in every role??
-        role_details["role_title"] = form.fields.get("ctl00$workarea$txt_p1_alt_title")
-        role_details["role_start"] = parse(form.fields.get("ctl00$workarea$txt_p1_startdate"))
+        role_details["role_title"] = fields.get("ctl00$workarea$txt_p1_alt_title")
+        role_details["role_start"] = parse(fields.get("ctl00$workarea$txt_p1_startdate"))
         # Role Status
-        role_details["role_status"] = form.fields.get("ctl00$workarea$txt_p2_status")
+        role_details["role_status"] = fields.get("ctl00$workarea$txt_p2_status")
         # Line Manager
-        line_manager_el = next((op for op in form.inputs["ctl00$workarea$cbo_p2_linemaneger"] if op.get("selected")), None)
+        line_manager_el = next((op for op in inputs["ctl00$workarea$cbo_p2_linemaneger"] if op.get("selected")), None)
         role_details["line_manager_number"] = maybe_int(line_manager_el.get("value")) if line_manager_el is not None else None
         role_details["line_manager"] = line_manager_el.text.strip() if line_manager_el is not None else None
         # Review Date
-        role_details["review_date"] = parse(form.fields.get("ctl00$workarea$txt_p2_review"))
+        role_details["review_date"] = parse(fields.get("ctl00$workarea$txt_p2_review"))
         # CE (Confidential Enquiry) Check  # TODO if CE check date != current date then is valid
-        role_details["ce_check"] = parse(form.fields.get("ctl00$workarea$txt_p2_cecheck"))
+        role_details["ce_check"] = parse(fields.get("ctl00$workarea$txt_p2_cecheck"))
         # Disclosure Check
-        disclosure_with_date = form.fields.get("ctl00$workarea$txt_p2_disclosure")
+        disclosure_with_date = fields.get("ctl00$workarea$txt_p2_disclosure")
         if disclosure_with_date.startswith("Disclosure Issued : "):
             disclosure_date = parse(disclosure_with_date.removeprefix("Disclosure Issued : "))
             disclosure_check = "Disclosure Issued"
@@ -762,7 +819,7 @@ class PeopleScraper(InterfaceAuthenticated):
 
         # Get all levels of the org hierarchy and select those that will have information:
         # Get all inputs with location data
-        org_levels = [v for k, v in sorted(dict(form.inputs).items()) if "ctl00$workarea$cbo_p1_location" in k]
+        org_levels = [v for k, v in sorted(dict(inputs).items()) if "ctl00$workarea$cbo_p1_location" in k]
         # TODO
         all_locations = {row.get("title"): row.findtext("./option") for row in org_levels}
 
