@@ -10,7 +10,6 @@ from compass.core.interface_base import InterfaceAuthenticated
 from compass.core.logger import logger
 from compass.core.schemas import member as schema
 from compass.core.settings import Settings
-from compass.core.utility import cast
 from compass.core.utility import maybe_int
 from compass.core.utility import parse
 from compass.core.utility import validation_errors_logging
@@ -260,12 +259,18 @@ class PeopleScraper(InterfaceAuthenticated):
             primary_role
 
         """
+        # pylint: disable=too-many-locals
+        # Want to keep all functionality in one place, to reduce the number of
+        # calls to Compass.
+        # TODO could refactor some internals into helper functions
         logger.debug(f"getting roles tab for member number: {membership_num}")
         response = self._get_member_profile_tab(membership_num, "Roles")
         tree = html.fromstring(response)
 
         if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
             raise PermissionError(f"You do not have permission to the details of {membership_num}")
+
+        statuses_set = statuses is not None
 
         roles_data = {}
         rows = tree.xpath("//tbody/tr")
@@ -310,7 +315,7 @@ class PeopleScraper(InterfaceAuthenticated):
                 continue
 
             # Role status filter
-            if role_status not in statuses:
+            if statuses_set and role_status not in statuses:
                 continue
 
             roles_data[role_number] = role_details
@@ -703,22 +708,26 @@ class PeopleScraper(InterfaceAuthenticated):
             "County / Area / Scottish Region / Overseas Branch": "County",
         }
         renamed_modules = {
-            1: "module_01",
+            "001": "module_01",
             "TRST": "trustee_intro",
-            2: "module_02",
-            3: "module_03",
-            4: "module_04",
+            "002": "module_02",
+            "003": "module_03",
+            "004": "module_04",
             "GDPR": "GDPR",
+            "SFTY": "safety",
+            "SAFE": "safeguarding",
         }
         unset_vals = {"--- Not Selected ---", "--- No Items Available ---", "--- No Line Manager ---"}
 
         module_names = {
             "Essential Information": "M01",
             "Trustee Introduction": "TRST",
-            "PersonalLearningPlan": "M02",
+            "Personal Learning Plan": "M02",
             "Tools for the Role (Section Leaders)": "M03",
             "Tools for the Role (Managers and Supporters)": "M04",
             "General Data Protection Regulations": "GDPR",
+            "Safety Training": "SFTY",
+            "Safeguarding Training": "SAFE",
         }
 
         references_codes = {
@@ -767,17 +776,18 @@ class PeopleScraper(InterfaceAuthenticated):
         # Review Date
         role_details["review_date"] = parse(fields.get("ctl00$workarea$txt_p2_review"))
         # CE (Confidential Enquiry) Check  # TODO if CE check date != current date then is valid
-        role_details["ce_check"] = parse(fields.get("ctl00$workarea$txt_p2_cecheck"))
+        ce_check = fields.get("ctl00$workarea$txt_p2_cecheck")
+        role_details["ce_check"] = parse(ce_check) if ce_check != "Pending" else None
         # Disclosure Check
-        disclosure_with_date = fields.get("ctl00$workarea$txt_p2_disclosure")
+        disclosure_with_date = fields.get("ctl00$workarea$txt_p2_disclosure", "")
         if disclosure_with_date.startswith("Disclosure Issued : "):
             disclosure_date = parse(disclosure_with_date.removeprefix("Disclosure Issued : "))
             disclosure_check = "Disclosure Issued"
         else:
             disclosure_date = None
-            disclosure_check = disclosure_with_date
-        role_details["disclosure_check"] = disclosure_check  # TODO extract date
-        role_details["disclosure_date"] = disclosure_date  # TODO extract date
+            disclosure_check = disclosure_with_date or None
+        role_details["disclosure_check"] = disclosure_check
+        role_details["disclosure_date"] = disclosure_date
         # References
         role_details["references"] = references_codes.get(ref_code, ref_code)
 
@@ -812,9 +822,9 @@ class PeopleScraper(InterfaceAuthenticated):
                 info = {
                     # "name": module_names[module_name],  # short_name
                     "validated": parse(module[2][0].value),  # Save module validation date
-                    "validated_by": module[1][1].value or None,  # Save who validated the module
+                    "validated_by": module[1][1].get("value") or None,  # Save who validated the module
                 }
-                mod_code = cast(module[2][0].get("data-ng_value"))  # int or str
+                mod_code: str = module[2][0].get("data-ng_value")
                 modules_output[renamed_modules[mod_code]] = info
 
         # Get all levels of the org hierarchy and select those that will have information:

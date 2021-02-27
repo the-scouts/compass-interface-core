@@ -1,10 +1,9 @@
-import ast
 import contextlib
 import ctypes
 import datetime
 import functools
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 import pydantic
 
@@ -25,24 +24,6 @@ def compass_restify(data: dict[str, Any]) -> list[dict[str, str]]:
     It seems that JSON data MUST be in the rather odd format of {"Key": key, "Value": value} for each (key, value) pair.
     """
     return [{"Key": f"{k}", "Value": f"{v}"} for k, v in data.items()]
-
-
-def cast(value: Any, ast_eval: bool = False) -> Union[int, str, Any]:
-    """Casts values to native Python types.
-
-    lxml ETree return types don't do this automatically, and by using
-    ast.literal_eval we can directly map string representations of
-    lists etc into native types.
-    """
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        if not ast_eval:
-            return str(value)
-        try:
-            return ast.literal_eval(str(value)) if value else value
-        except (ValueError, TypeError, SyntaxError):
-            return value
 
 
 def maybe_int(value: Any) -> Optional[int]:
