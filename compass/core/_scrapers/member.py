@@ -146,6 +146,7 @@ class PeopleScraper(InterfaceAuthenticated):
                 Access to the member is not given by the current authentication
 
         """
+        # pylint: disable=too-many-locals
         response = self._get_member_profile_tab(membership_num, "Personal")
 
         tree = html.fromstring(response)
@@ -196,7 +197,8 @@ class PeopleScraper(InterfaceAuthenticated):
         # Occupation
         details["occupation"] = tree.xpath("normalize-space(//*[@id='divProfile0']//*[text()='Occupation:']/../../td[2])")
         # Address
-        address = tree.xpath('string(//*[text()="Address"]/../../../td[3])') or ", .  "
+        original_address = tree.xpath('string(//*[text()="Address"]/../../../td[3])')
+        address = original_address or ", .  "
         addr_main, addr_code = address.rsplit(". ", 1)
         postcode, country = addr_code.rsplit(" ", 1)  # Split Postcode & Country
         try:
@@ -204,7 +206,7 @@ class PeopleScraper(InterfaceAuthenticated):
         except ValueError:
             street, town = addr_main.rsplit(", ", 1)
             county = None
-        details["address"] = address or None
+        details["address"] = original_address or None
         details["country"] = country or None
         details["postcode"] = postcode or None
         details["county"] = county or None
@@ -429,6 +431,8 @@ class PeopleScraper(InterfaceAuthenticated):
         # Want to keep all functionality in one place, to reduce the number of
         # calls to Compass.
         # TODO could refactor some internals into helper functions
+        logger.debug(f"getting training tab for member number: {membership_num}")
+
         response = self._get_member_profile_tab(membership_num, "Training")
         tree = html.fromstring(response)
 
@@ -490,9 +494,11 @@ class PeopleScraper(InterfaceAuthenticated):
                 info["role_title"] = child_nodes[0].text_content()
                 info["role_start"] = parse(child_nodes[1].text_content())
                 status_with_review = child_nodes[2].text_content()
-                if status_with_review.startswith("Full (Review Due: "):
+                # TODO for `Ending: blah` roles, should we store the ending date?
+                if status_with_review.startswith("Full (Review Due: ") or status_with_review.startswith("Full (Ending: "):
                     info["role_status"] = "Full"
-                    info["review_date"] = parse(status_with_review.removeprefix("Full (Review Due: ").removesuffix(")"))
+                    date_str = status_with_review.removeprefix("Full (Review Due: ").removeprefix("Full (Ending: ").rstrip(")")
+                    info["review_date"] = parse(date_str)
                 else:
                     info["role_status"] = status_with_review
                     info["review_date"] = None
