@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import re
 import time
 from typing import get_args, Literal, Optional, overload, TYPE_CHECKING, Union
@@ -15,13 +16,15 @@ from compass.core.utility import parse
 from compass.core.utility import validation_errors_logging
 
 if TYPE_CHECKING:
-    import datetime
+    from collections.abc import Iterable
 
     import requests
 
 MEMBER_PROFILE_TAB_TYPES = Literal[
     "Personal", "Roles", "Permits", "Training", "Awards", "Emergency", "Comms", "Visibility", "Disclosures"
 ]
+
+NON_VOLUNTEER_TITLES = {"occasional helper", "pvg", "network member"}
 
 mogl_map = dict(
     SA="safety",
@@ -219,8 +222,11 @@ class PeopleScraper(InterfaceAuthenticated):
             return schema.MemberDetails.parse_obj(details)
 
     def get_roles_tab(
-        self, membership_num: int, keep_non_volunteer_roles: bool = False, statuses: Optional[set] = None
-    ) -> schema.MemberRolesDict:
+        self,
+        membership_num: int,
+        keep_non_volunteer_roles: bool = False,
+        statuses: Optional[set] = None,
+    ) -> schema.MemberRolesCollection:
         """Returns data from Roles tab for a given member.
 
         Sanitises the data to a common format, and removes Occasional Helper, Network, and PVG roles by default.
@@ -234,20 +240,26 @@ class PeopleScraper(InterfaceAuthenticated):
             A dict of dicts mapping keys to the corresponding data from the roles tab.
 
             E.g.:
-            {1234578:
-             {'role_number': 1234578,
-              'membership_number': ...,
-              'role_title': '...',
-              'role_class': '...',
-              'role_type': '...',
-              'location_id': ...,
-              'location_name': '...',
-              'role_start_date': datetime.datetime(...),
-              'role_end': datetime.datetime(...),
-              'role_status': '...'},
-             {...}
-            }
-
+            MemberRolesCollection(
+                roles={
+                    1234578: MemberRoleCore(
+                        role_number=...,
+                        membership_number=...,
+                        role_title='...',
+                        role_class='...',
+                        role_type='...',
+                        location_id=...,
+                        location_name='...',
+                        role_start=datetime.date(...),
+                        role_end=datetime.date(...),
+                        role_status='...',
+                        review_date=datetime.date(...),
+                        can_view_details=True|False
+                    ),
+                    ...
+                },
+                membership_duration=...
+            )
 
             Keys will always be present.
 
@@ -274,6 +286,7 @@ class PeopleScraper(InterfaceAuthenticated):
 
         statuses_set = statuses is not None
 
+        roles_dates = []
         roles_data = {}
         rows = tree.xpath("//tbody/tr")
         for row in rows:
@@ -293,7 +306,7 @@ class PeopleScraper(InterfaceAuthenticated):
                 role_status = status_with_review
                 review_date = None
 
-            role_details = dict(
+            role_details = schema.MemberRoleCore(
                 role_number=role_number,
                 membership_number=membership_num,
                 role_title=cells[0].text_content().strip(),
@@ -310,11 +323,14 @@ class PeopleScraper(InterfaceAuthenticated):
                 can_view_details=any("VIEWROLE" in el.get("class") for el in cells[6]),
             )
             # Remove OHs etc from list
-            if not keep_non_volunteer_roles and (
-                "helper" in role_details["role_class"].lower()
-                or {role_details["role_title"].lower()} <= {"occasional helper", "pvg", "network member"}
-            ):
-                continue
+            if "helper" in role_details.role_class.lower() or {role_details.role_title.lower()} <= NON_VOLUNTEER_TITLES:
+                if keep_non_volunteer_roles is False:
+                    continue
+            # If role is a full volunteer role, potentially add to date list
+            elif role_status != "Cancelled":
+                # If role_end is a falsy value (None), replace with today's date
+                pair = role_details.role_start, role_details.role_end or datetime.date.today()
+                roles_dates.append(pair)
 
             # Role status filter
             if statuses_set and role_status not in statuses:
@@ -322,8 +338,12 @@ class PeopleScraper(InterfaceAuthenticated):
 
             roles_data[role_number] = role_details
 
+        # Calculate days of membership (inclusive), normalise to years.
+        membership_duration_days = sum((end - start).days + 1 for start, end in _reduce_date_list(roles_dates))
+        membership_duration_years = membership_duration_days / 365.2425  # = Leap year except thrice per 400 years.
+
         with validation_errors_logging(membership_num):
-            return schema.MemberRolesDict.parse_obj(roles_data)
+            return schema.MemberRolesCollection(roles=roles_data, membership_duration=membership_duration_years)
 
     def get_permits_tab(self, membership_num: int) -> schema.MemberPermitsList:
         """Returns data from Permits tab for a given member.
@@ -855,3 +875,47 @@ class PeopleScraper(InterfaceAuthenticated):
         }
         with validation_errors_logging(role_number, name="Role Number"):
             return schema.MemberRolePopup.parse_obj(full_details)
+
+
+def _reduce_date_list(dl: Iterable) -> list[tuple[datetime.date, datetime.date]]:
+    """Reduce list of start and end dates to disjoint ranges.
+
+    Iterate through date pairs and get longest consecutive date ranges.
+    For disjoint ranges, call function recursively. Returns all found date
+    pairs.
+
+    Args:
+        dl: list of start, end date pairs
+
+    Returns:
+        list of start, end date pairs
+
+    """
+    unused_values = set()  # We init the date values with the first
+    sdl = sorted(dl)
+    start_, end_ = sdl[0]
+    for i, (start, end) in enumerate(sdl):
+        # If date range completely outwith, set both start and end
+        if start < start_ and end > end_:
+            start_, end_ = start, end
+        # If start and latest end overlap, and end is later than latest end, update latest end
+        elif start <= end_ < end:
+            end_ = end
+        # If end and earliest start overlap, and start is earlier than earliest start, update earliest start
+        elif end >= start_ > start:
+            start_ = start
+        # If date range completely within, do nothing
+        elif start >= start_ and end <= end_:
+            pass
+        # If adjacent
+        elif abs(end_ - start).days == 1 or abs(start_ - end).days == 1:
+            end_ = max(end, end_)
+            start_ = min(start, start_)
+        # If none of these (date forms a disjoint set) note as unused
+        else:
+            unused_values.add(i)
+    output_pairs = [(start_, end_)]
+    # If there are remaining items not used, pass recursively
+    if len(unused_values) != 0:
+        output_pairs.extend(_reduce_date_list((pair for i, pair in enumerate(sdl) if i in unused_values)))
+    return output_pairs
