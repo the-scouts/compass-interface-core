@@ -1,20 +1,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any, Generic, Literal, Optional, TYPE_CHECKING, TypeVar, Union
+from typing import Literal, Optional, Union
 import warnings
 
 import phonenumbers
 import pydantic
-from pydantic import generics
-
-# Must use typing.Dict etc for generics not native as of pydantic 1.7.3
-from typing import List  # isort: skip
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-DataT = TypeVar("DataT")
 
 TYPES_ROLE_STATUS = Literal["Cancelled", "Closed", "Full", "Pre provisional", "Provisional"]
 TYPES_SEX = Literal["Male", "Female", "Unknown"]
@@ -39,7 +30,7 @@ TYPES_ETHNICITY = Literal[
     "18.Other",
     "19.Prefer not to say",
 ]
-TYPES_RELIGION = Union[
+TYPES_RELIGION = Union[  # type: ignore[misc]
     Literal[
         "Buddhist",
         "Christian (including all Christian denominations)",
@@ -54,7 +45,7 @@ TYPES_RELIGION = Union[
     pydantic.constr(regex=r"^Any other religion.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
     pydantic.constr(regex=r"^No religion.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
 ]
-TYPES_OCCUPATION = Union[
+TYPES_OCCUPATION = Union[  # type: ignore[misc]
     Literal[
         "Employed",
         "Unemployed",
@@ -103,6 +94,45 @@ TYPES_DISCLOSURES_APPOINTMENT = Literal[
     "ID check required",
     "No Disclosure",
 ]  # Disclosure statuses in role details popup
+TYPES_LEARNING_METHOD = Literal[
+    "Course",
+    "DVD/Video",
+    "E-Learning",
+    "External Course",
+    "Independent Study",
+    "On the Job",
+    "One to One",
+    "Practical",
+    "Small Group",
+    "Workbook",
+    "Your prior learning/experience recognised",
+    "Other",
+    # First Aid
+    "Life Support",
+    "Major illness",
+    "Trauma and injury",
+    # Manager and Supporter: Induction (rare)
+    "RST Induction [England only]",
+    # Manager and Supporter: Skills Courses
+    "Skills Course - Achieving Growth",
+    "Skills Course - Meeting the Challenges",
+    "Skills Course - Skills of Management",
+    # Manager and Supporter: Independent Learning
+    "IL - Building Effective Teams",
+    "IL - Dealing with Difficult Situations",
+    "IL - Decision Making",
+    "IL - Enabling Change",
+    "IL - Financial and Physical Resources",
+    "IL - Finding, Appointing and Welcoming Volunteers",
+    "IL - Getting the Word Out",
+    "IL - Keeping, Developing and Managing Volunteers",
+    "IL - Leading Local Scouting",
+    "IL - Managing Time and Personal Skills",
+    "IL - Planning For Growth",
+    "IL - Project Management",
+    "IL - Safety for Managers and Supporters",
+    "IL - Supporting the Adult Training Scheme",
+]
 TYPES_PERMIT = Literal[
     "Archery",
     "Bell Boating",
@@ -193,22 +223,6 @@ TYPES_DISCLOSURE_STATUSES = Literal[
 ]  # Disclosure statuses in disclosures tab
 
 
-class MemberGenericList(generics.GenericModel, Generic[DataT]):
-    __root__: List[DataT]
-
-    def __iter__(self) -> Iterator[DataT]:
-        """Iterate over model items."""
-        yield from self.__root__
-
-    def __getitem__(self, item: int) -> DataT:
-        """Get item by index."""
-        return self.__root__[item]
-
-    def __len__(self) -> int:
-        """Get number of items."""
-        return len(self.__root__)
-
-
 class MemberBase(pydantic.BaseModel):
     membership_number: int
 
@@ -235,8 +249,8 @@ class MemberDetails(MemberBase):
     sex: Optional[TYPES_SEX] = None
     nationality: Optional[str] = None  # literal? Big list...!
     ethnicity: Optional[TYPES_ETHNICITY] = None
-    religion: Optional[TYPES_RELIGION] = None
-    occupation: Optional[TYPES_OCCUPATION] = None
+    religion: Optional[TYPES_RELIGION] = None  # type: ignore[valid-type]
+    occupation: Optional[TYPES_OCCUPATION] = None  # type: ignore[valid-type]
     join_date: Optional[datetime.date] = None
 
     # Contact Details
@@ -253,7 +267,7 @@ class MemberDetails(MemberBase):
     # TODO - potential disabilities, qualifications, hobbies sections
 
     @pydantic.validator("main_phone")
-    def check_phone_number(cls, v: Optional[str], values: dict[str, Any]) -> Optional[str]:
+    def check_phone_number(cls, v: Optional[str], values: dict[str, Optional[Union[str, datetime.date]]]) -> Optional[str]:
         if v is None or not v or v == "0" or len(v) < 2:
             return None
 
@@ -276,7 +290,9 @@ class MemberRoleCore(MemberBase, MemberRoleBase):
     # Role details
     role_end: Optional[datetime.date] = None
     role_class: TYPES_ROLE_CLASS
-    role_type: Optional[str] = None  # TODO literal
+    role_type: Optional[str] = None
+    # Full list of role types runs to 458, probably too many for a Literal type
+    # xref: https://compass.scouts.org.uk/Roles.aspx?closed=Y
 
     # Location details
     location_id: Optional[int] = None
@@ -326,21 +342,22 @@ class MemberRoleHierarchy(pydantic.BaseModel):
 
 # Roles Tab (Role Detail Popup - Getting Started)
 class MemberRoleGettingStartedModule(pydantic.BaseModel):
-    # name: str  # Module name  # needed?? as saved under key
     validated: Optional[datetime.date] = None
     validated_by: Optional[str] = None
 
 
 # Roles Tab (Role Detail Popup - Getting Started)
 class MemberRoleGettingStarted(pydantic.BaseModel):
-    # Getting Started Training
+    """Getting Started Training."""
+
     module_01: Optional[MemberRoleGettingStartedModule] = None
     trustee_intro: Optional[MemberRoleGettingStartedModule] = None
     module_02: Optional[MemberRoleGettingStartedModule] = None
     module_03: Optional[MemberRoleGettingStartedModule] = None
     module_04: Optional[MemberRoleGettingStartedModule] = None
     gdpr: Optional[MemberRoleGettingStartedModule] = None
-    # training_completion_date: Optional[str] = None  # TODO where is this from???!!!
+    safety: Optional[MemberRoleGettingStartedModule]
+    safeguarding: Optional[MemberRoleGettingStartedModule]
 
 
 # Roles Tab (Role Detail Popup - All)
@@ -362,9 +379,9 @@ class MemberTrainingRole(MemberRoleBase):
 
     # Completion details
     completion: Optional[str]
-    completion_type: Optional[str]
+    completion_type: Optional[Literal["PLP", "Wood Badge"]]
     completion_date: Optional[datetime.date]
-    wood_badge_number: Optional[int]  # WB_1234567
+    wood_badge_number: Optional[int]
 
 
 # Training Tab (PLP)
@@ -376,7 +393,7 @@ class MemberTrainingPLP(pydantic.BaseModel):
 
     # Learning details
     learning_required: Optional[bool]
-    learning_method: Optional[str]
+    learning_method: Optional[TYPES_LEARNING_METHOD]
     learning_completed: Optional[datetime.date]
     learning_date: Optional[datetime.date]
 
@@ -393,7 +410,7 @@ class MemberMOGL(pydantic.BaseModel):
 
 
 # Training Tab (OGL - all)
-class MemberMOGLList(pydantic.BaseModel):
+class MemberMandatoryTraining(pydantic.BaseModel):
     safety: MemberMOGL
     safeguarding: MemberMOGL
     first_aid: MemberMOGL
@@ -404,7 +421,7 @@ class MemberMOGLList(pydantic.BaseModel):
 class MemberTrainingTab(pydantic.BaseModel):
     roles: dict[int, MemberTrainingRole]
     plps: dict[int, list[MemberTrainingPLP]]
-    mandatory: MemberMOGLList
+    mandatory: MemberMandatoryTraining
 
 
 # Permits Tab
@@ -415,10 +432,6 @@ class MemberPermit(MemberBase):
     restrictions: str
     expires: Optional[datetime.date]
     status: Literal["PERM_OK", "PERM_EXP", "PERM_REV"]
-
-
-# Permits Tab - collection
-MemberPermitsList = MemberGenericList[MemberPermit]
 
 
 class MemberAward(MemberBase):
@@ -432,7 +445,8 @@ class MemberDisclosure(MemberBase):
     country: Optional[Literal["England & Wales", "Scotland", "The Scout Association"]]
     provider: TYPES_DISCLOSURE_PROVIDERS
     type: Literal["Enhanced with Barring"]
-    number: Union[Optional[int], pydantic.constr(regex=r"^\d{7}R$")]  # NoQA: F722 # If Application Withdrawn, no disclosure number
+    # If Application Withdrawn, no disclosure number. If Scottish in the early 2000s, 7 digits ending with an R
+    number: Union[Optional[int], pydantic.constr(regex=r"^\d{7}R$")]  # type: ignore[valid-type]  # NoQA: F722
     issuer: Optional[TYPES_DISCLOSURE_PROVIDERS]
     issue_date: Optional[datetime.date]  # If Application Withdrawn, maybe no issue date
     status: TYPES_DISCLOSURE_STATUSES

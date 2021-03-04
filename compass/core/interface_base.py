@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 import datetime
 import time
-from typing import Any, Optional, TYPE_CHECKING, Union
+from typing import Any, Optional, TYPE_CHECKING
 
 from compass.core.logger import logger
 from compass.core.settings import Settings
@@ -11,7 +11,6 @@ from compass.core.utility import compass_restify
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from collections.abc import MutableMapping
 
     import requests
 
@@ -25,9 +24,9 @@ class InterfaceBase:
 
     def _get(
         self,
-        url: Union[str, bytes],
-        params: Optional[MutableMapping[str, str]] = None,
-        headers: Optional[MutableMapping[str, str]] = None,
+        url: str,
+        params: Optional[dict[str, Optional[str]]] = None,
+        headers: Optional[dict[str, str]] = None,
         stream: Optional[bool] = None,
         **kwargs: Any,
     ) -> requests.Response:
@@ -118,7 +117,7 @@ class InterfaceAuthenticated(InterfaceBase, abc.ABC):
     def _get(
         self,
         url: str,
-        params: Union[None, dict[str, str]] = None,
+        params: Optional[dict[str, Optional[str]]] = None,
         headers: Optional[dict[str, str]] = None,
         stream: Optional[bool] = None,
         auth_header: bool = False,

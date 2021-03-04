@@ -17,6 +17,7 @@ from compass.core.utility import validation_errors_logging
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from collections.abc import Iterator
 
     import requests
 
@@ -225,7 +226,7 @@ class PeopleScraper(InterfaceAuthenticated):
         self,
         membership_num: int,
         keep_non_volunteer_roles: bool = False,
-        statuses: Optional[set] = None,
+        statuses: Optional[set[str]] = None,
     ) -> schema.MemberRolesCollection:
         """Returns data from Roles tab for a given member.
 
@@ -318,7 +319,7 @@ class PeopleScraper(InterfaceAuthenticated):
                 location_name=cells[2].text_content().strip(),
                 role_start=parse(cells[3].text_content().strip()),
                 role_end=parse(cells[4].text_content().strip()),
-                role_status=role_status,
+                role_status=role_status,  # type: ignore[arg-type]  # literal validation is done by Pydantic
                 review_date=review_date,
                 can_view_details=any("VIEWROLE" in el.get("class") for el in cells[6]),
             )
@@ -339,13 +340,12 @@ class PeopleScraper(InterfaceAuthenticated):
             roles_data[role_number] = role_details
 
         # Calculate days of membership (inclusive), normalise to years.
-        membership_duration_days = sum((end - start).days + 1 for start, end in _reduce_date_list(roles_dates))
-        membership_duration_years = membership_duration_days / 365.2425  # = Leap year except thrice per 400 years.
+        membership_duration_years = _membership_duration(roles_dates)
 
         with validation_errors_logging(membership_num):
             return schema.MemberRolesCollection(roles=roles_data, membership_duration=membership_duration_years)
 
-    def get_permits_tab(self, membership_num: int) -> schema.MemberPermitsList:
+    def get_permits_tab(self, membership_num: int) -> list[schema.MemberPermit]:
         """Returns data from Permits tab for a given member.
 
         If a permit has been revoked, the expires value is None and the status is PERM_REV
@@ -371,24 +371,25 @@ class PeopleScraper(InterfaceAuthenticated):
         rows = tree.xpath('//table[@id="tbl_p4_permits"]//tr[@class="msTR msTRPERM"]')
 
         permits = []
-        for row in rows:
-            permit: dict[str, Union[None, int, str, datetime.date]] = dict(membership_number=membership_num)
-            child_nodes = list(row)
-            permit["permit_type"] = child_nodes[1].text_content()
-            permit["category"] = child_nodes[2].text_content()
-            permit["type"] = child_nodes[3].text_content()
-            permit["restrictions"] = child_nodes[4].text_content()
-            expires = child_nodes[5].text_content()
-            permit["expires"] = parse(expires) if expires != "Revoked" else None
-            permit["status"] = child_nodes[5].get("class")
-
-            permits.append(permit)
-
         with validation_errors_logging(membership_num):
-            return schema.MemberPermitsList.parse_obj(permits)
+            for row in rows:
+                child_nodes = list(row)
+                expires = child_nodes[5].text_content()
+                permit = schema.MemberPermit(
+                    membership_number=membership_num,
+                    permit_type=child_nodes[1].text_content(),
+                    category=child_nodes[2].text_content(),
+                    type=child_nodes[3].text_content(),
+                    restrictions=child_nodes[4].text_content(),
+                    expires=parse(expires) if expires != "Revoked" else None,
+                    status=child_nodes[5].get("class"),
+                )
+                permits.append(permit)
+
+            return permits
 
     @overload
-    def get_training_tab(self, membership_num: int, ongoing_only: Literal[True]) -> schema.MemberMOGLList:
+    def get_training_tab(self, membership_num: int, ongoing_only: Literal[True]) -> schema.MemberMandatoryTraining:
         ...
 
     @overload
@@ -396,12 +397,14 @@ class PeopleScraper(InterfaceAuthenticated):
         ...
 
     @overload
-    def get_training_tab(self, membership_num: int, ongoing_only: bool) -> Union[schema.MemberTrainingTab, schema.MemberMOGLList]:
+    def get_training_tab(
+        self, membership_num: int, ongoing_only: bool
+    ) -> Union[schema.MemberTrainingTab, schema.MemberMandatoryTraining]:
         ...
 
     def get_training_tab(
         self, membership_num: int, ongoing_only: bool = False
-    ) -> Union[schema.MemberTrainingTab, schema.MemberMOGLList]:
+    ) -> Union[schema.MemberTrainingTab, schema.MemberMandatoryTraining]:
         """Returns data from Training tab for a given member.
 
         Args:
@@ -553,8 +556,8 @@ class PeopleScraper(InterfaceAuthenticated):
             cell_text = {c.get("id", "<None>").split("_")[0]: c.text_content() for c in ongoing_learning}
 
             training_ogl[mogl_map[ongoing_learning.get("data-ng_code")]] = dict(
-                completed_date=parse(cell_text.get("tdLastComplete")),
-                renewal_date=parse(cell_text.get("tdRenewal")),
+                completed_date=parse(cell_text.get("tdLastComplete")),  # type: ignore[arg-type]
+                renewal_date=parse(cell_text.get("tdRenewal")),  # type: ignore[arg-type]
             )
             # TODO missing data-pk from list(cell)[0].tag == "input", and module names/codes. Are these important?
 
@@ -563,7 +566,7 @@ class PeopleScraper(InterfaceAuthenticated):
 
         if ongoing_only:
             with validation_errors_logging(membership_num):
-                return schema.MemberMOGLList.parse_obj(training_ogl)
+                return schema.MemberMandatoryTraining.parse_obj(training_ogl)
 
         training_data = {
             "roles": training_roles,
@@ -877,7 +880,7 @@ class PeopleScraper(InterfaceAuthenticated):
             return schema.MemberRolePopup.parse_obj(full_details)
 
 
-def _reduce_date_list(dl: Iterable) -> list[tuple[datetime.date, datetime.date]]:
+def _reduce_date_list(dl: Iterable[tuple[datetime.date, datetime.date]]) -> Iterator[tuple[datetime.date, datetime.date]]:
     """Reduce list of start and end dates to disjoint ranges.
 
     Iterate through date pairs and get longest consecutive date ranges.
@@ -914,8 +917,13 @@ def _reduce_date_list(dl: Iterable) -> list[tuple[datetime.date, datetime.date]]
         # If none of these (date forms a disjoint set) note as unused
         else:
             unused_values.add(i)
-    output_pairs = [(start_, end_)]
+    yield start_, end_
     # If there are remaining items not used, pass recursively
     if len(unused_values) != 0:
-        output_pairs.extend(_reduce_date_list((pair for i, pair in enumerate(sdl) if i in unused_values)))
-    return output_pairs
+        yield from _reduce_date_list((pair for i, pair in enumerate(sdl) if i in unused_values))
+
+
+def _membership_duration(dates: Iterable[tuple[datetime.date, datetime.date]]) -> float:
+    """Calculate days of membership (inclusive), normalise to years."""
+    membership_duration_days = sum((end - start).days + 1 for start, end in _reduce_date_list(dates))
+    return membership_duration_days / 365.2425  # Leap year except thrice per 400 years.

@@ -72,8 +72,12 @@ class People:
 
         """
         if only_active:
-            statuses = STATUSES - {"Closed", "Cancelled"}
-        return self._scraper.get_roles_tab(membership_num, keep_non_volunteer_roles, statuses)
+            unique_statuses = STATUSES - {"Closed", "Cancelled"}
+        elif statuses is None:
+            unique_statuses = set()
+        else:
+            unique_statuses = set(statuses)
+        return self._scraper.get_roles_tab(membership_num, keep_non_volunteer_roles, unique_statuses)
 
     def role_detail(self, role_number: int) -> schema.MemberRolePopup:
         """Get detailed information for specified role.
@@ -97,7 +101,7 @@ class People:
         """
         return self._scraper.get_roles_detail(role_number)
 
-    def permits(self, membership_num: int) -> schema.MemberPermitsList:
+    def permits(self, membership_num: int) -> list[schema.MemberPermit]:
         """Gets permits tab data for a given member.
 
         Args:
@@ -125,7 +129,7 @@ class People:
         """
         return self._scraper.get_training_tab(membership_num, ongoing_only=False)
 
-    def ongoing_learning(self, membership_num: int) -> schema.MemberMOGLList:
+    def ongoing_learning(self, membership_num: int) -> schema.MemberMandatoryTraining:
         """Gets ongoing learning data for a given member.
 
         Args:
@@ -198,7 +202,9 @@ class People:
         """
         disclosures = self.disclosures(membership_num)
         date_map = {disc.expiry_date: disc for disc in disclosures if disc.expiry_date}
-        return date_map.get(max(date_map.keys(), default=None))
+        if not date_map:
+            return None
+        return date_map[max(date_map)]
 
 
 # class Member:
