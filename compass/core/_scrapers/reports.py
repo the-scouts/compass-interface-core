@@ -12,7 +12,7 @@ from lxml import html
 from compass.core import utility
 from compass.core.errors import CompassReportError
 from compass.core.errors import CompassReportPermissionError
-from compass.core.interface_base import InterfaceAuthenticated
+from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
 from compass.core.settings import Settings
 
@@ -20,15 +20,17 @@ if TYPE_CHECKING:
     import requests
 
 
-class ReportsScraper(InterfaceAuthenticated):
+class ReportsScraper(InterfaceBase):
     def __init__(self, session: requests.Session, member_number: int, role_number: int, jk: str):
         """Constructor for ReportsScraper.
 
         takes an initialised Session object from Logon
         """
-        # pylint: disable=useless-super-delegation
-        # Want to keep this method for future use
-        super().__init__(session, member_number, role_number, jk)
+        super().__init__(session)
+
+        self._member_number = member_number
+        self._role_number = role_number
+        self._jk = jk
 
     def get_report_token(self, report_number: int, role_number: int) -> str:
         params = {
@@ -36,7 +38,14 @@ class ReportsScraper(InterfaceAuthenticated):
             "pMemberRoleNumber": str(role_number),
         }
         logger.debug("Getting report token")
-        response = self._get(f"{Settings.web_service_path}/ReportToken", auth_header=True, params=params)
+        response = utility.auth_header_get(
+            self._member_number,
+            self._role_number,
+            self._jk,
+            self.s,
+            f"{Settings.web_service_path}/ReportToken",
+            params=params,
+        )
         response.raise_for_status()
 
         report_token_uri = str(response.json().get("d"))
@@ -64,11 +73,11 @@ class ReportsScraper(InterfaceAuthenticated):
     def get_report_page(self, run_report_url: str) -> bytes:
         # TODO what breaks if we don't update user-agent?
         # Compass does user-agent sniffing in reports!!!
-        self._update_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        self.s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
         # Get initial reports page, for export URL and config.
         logger.info("Generating report")
-        report_page = self._get(f"{Settings.base_url}/{run_report_url}")
+        report_page = self.s.get(f"{Settings.base_url}/{run_report_url}")
 
         return report_page.content
 
@@ -116,7 +125,7 @@ class ReportsScraper(InterfaceAuthenticated):
 
         # Including MicrosoftAJAX: Delta=true reduces size by ~1kb but increases time by 0.01s.
         # In reality we don't care about the output of this POST, just that it doesn't fail
-        report = self._post(run_report, data=form_data, headers={"X-MicrosoftAjax": "Delta=true"})
+        report = self.s.post(run_report, data=form_data, headers={"X-MicrosoftAjax": "Delta=true"})
         report.raise_for_status()
 
         # Check error state
@@ -126,12 +135,12 @@ class ReportsScraper(InterfaceAuthenticated):
     def report_keep_alive(self, report_page: str) -> str:
         logger.info(f"Extending Report Session {datetime.datetime.now()}")
         keep_alive = re.search(r'"KeepAliveUrl":"(.*?)"', report_page).group(1).encode().decode("unicode-escape")
-        response = self._post(f"{Settings.base_url}{keep_alive}")  # NoQA: F841
+        response = self.s.post(f"{Settings.base_url}{keep_alive}")  # NoQA: F841
 
         return keep_alive  # response
 
     def download_report_streaming(self, url: str, params: dict[str, str], filename: str) -> None:
-        with self._get(url, params=params, stream=True) as r:
+        with self.s.get(url, params=params, stream=True) as r:
             r.raise_for_status()
             with utility.filesystem_guard("Unable to write report export"), open(filename, "wb") as f:  # TODO swap `with` stmts?
                 for chunk in r.iter_content(chunk_size=1024 ** 2):  # Chunk size == 1MiB
@@ -139,7 +148,7 @@ class ReportsScraper(InterfaceAuthenticated):
 
     def download_report_normal(self, url: str, params: dict[str, str], filename: str) -> bytes:
         start = time.time()
-        csv_export = self._get(url, params=params)
+        csv_export = self.s.get(url, params=params)
         logger.debug(f"Exporting took {time.time() - start}s")
         logger.info("Saving report")
         with utility.filesystem_guard("Unable to write report export"):

@@ -1,29 +1,28 @@
 from __future__ import annotations
 
 import datetime
-from typing import Literal, Optional, TYPE_CHECKING, Union
+from typing import Any, Literal, Optional, TYPE_CHECKING, Union
 import urllib.parse
 
 from lxml import html
 import requests
 
 from compass.core import schemas
+from compass.core import utility
 from compass.core.errors import CompassAuthenticationError
 from compass.core.errors import CompassError
-from compass.core.interface_base import InterfaceAuthenticated
 from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
 import compass.core.schemas.logon as schema
 from compass.core.settings import Settings
-from compass.core.utility import PeriodicTimer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 TYPES_UNIT_LEVELS = Literal["Group", "District", "County", "Region", "Country", "Organisation"]
 TYPES_STO = Literal[None, "0", "5", "X"]
-TYPES_ROLES_DICT = dict[int, tuple[str, str]]
 TYPES_ROLE = tuple[str, str]
+TYPES_ROLES_DICT = dict[int, TYPES_ROLE]
 
 
 def login(username: str, password: str, /, *, role: Optional[str] = None, location: Optional[str] = None) -> Logon:
@@ -34,7 +33,7 @@ def login(username: str, password: str, /, *, role: Optional[str] = None, locati
     return Logon.from_logon((username, password), role, location)
 
 
-class Logon(InterfaceAuthenticated):
+class Logon:
     """Create connection to Compass and authenticate. Holds session state.
 
     Logon flow is:
@@ -69,25 +68,24 @@ class Logon(InterfaceAuthenticated):
         self.roles_dict: TYPES_ROLES_DICT = roles_dict or {}
         self.current_role: TYPES_ROLE = current_role or ("", "")
 
-        self.sto_thread = PeriodicTimer(150, self._extend_session_timeout)
-        # self.sto_thread.start()
-
-        # Set these last, treat as immutable after we leave init. Role can
-        # theoretically change, but this is not supported behaviour.
-
-        member_number = self.compass_props.master.user.cn  # Contact Number
-        role_number = self.compass_props.master.user.mrn  # Member Role Number
-        jk = self.compass_props.master.user.jk  # ???? Key?  # Join Key??? SHA2-512
+        self._sto_thread = utility.PeriodicTimer(150, self._extend_session_timeout)
+        # self._sto_thread.start()
 
         self._asp_net_id: str = session.cookies["ASP.NET_SessionId"]
         self._session_id: str = self.compass_props.master.sys.session_id
 
-        # Finally, call super
-        super().__init__(session, member_number, role_number, jk)
+        # For session timeout logic
+        self._session = session
+
+        # Set these last, treat as immutable after we leave init. Role can
+        # theoretically change, but this is not supported behaviour.
+        self.member_number = self.compass_props.master.user.cn  # Contact Number
+        self.role_number = self.compass_props.master.user.mrn  # Member Role Number
+        self._jk = self.compass_props.master.user.jk  # ???? Key?  # Join Key??? SHA2-512
 
     @classmethod
     def from_logon(
-        cls,
+        cls: type[Logon],
         credentials: tuple[str, str] = None,
         role_to_use: Optional[str] = None,
         role_location: Optional[str] = None,
@@ -111,7 +109,7 @@ class Logon(InterfaceAuthenticated):
                 If authentication with Compass fails
 
         """
-        worker = LogonCore()
+        worker = LogonCore.create_session()
         session = worker.s
 
         # Log in and try to confirm success
@@ -131,7 +129,7 @@ class Logon(InterfaceAuthenticated):
         return logon
 
     @classmethod
-    def from_session(cls, asp_net_id: str, user_props: dict[str, Union[str, int]], current_role: TYPES_ROLE) -> Logon:
+    def from_session(cls: type[Logon], asp_net_id: str, user_props: dict[str, Union[str, int]], current_role: TYPES_ROLE) -> Logon:
         """Initialise a Logon object with stored data.
 
         This method  is used to avoid logging in many times, by enabling reuse
@@ -151,7 +149,7 @@ class Logon(InterfaceAuthenticated):
                 For errors while executing the HTTP call
 
         """
-        session = requests.Session()
+        session: requests.Session = utility.CountingSession()
         session.cookies.set("ASP.NET_SessionId", asp_net_id, domain=Settings.base_domain)
 
         logon = cls(
@@ -160,15 +158,14 @@ class Logon(InterfaceAuthenticated):
             current_role=current_role,
         )
 
-        LogonCore(session=session).update_auth_headers(logon.cn, logon.mrn, logon._session_id)  # pylint: disable=protected-access
+        # Disable pylint protected-access check
+        LogonCore(session=session).update_auth_headers(logon.member_number, logon.role_number, logon._session_id)  # NoQA: W0212
 
         return logon
 
     def __repr__(self) -> str:
         """String representation of the Logon class."""
-        return f"{self.__class__} Compass ID: {self.cn} ({' - '.join(self.current_role)})"
-
-    # properties/accessors code:
+        return f"{self.__class__} Compass ID: {self.member_number} ({' - '.join(self.current_role)})"
 
     @property
     def hierarchy(self) -> schemas.hierarchy.HierarchyLevel:
@@ -191,13 +188,18 @@ class Logon(InterfaceAuthenticated):
 
         return schemas.hierarchy.HierarchyLevel(unit_id=unit_number, level=level_map[unit_level])
 
-    # Timeout code:
-
     def _extend_session_timeout(self, sto: TYPES_STO = "0") -> requests.Response:
         # Session time out. 4 values: None (normal), 0 (STO prompt) 5 (Extension, arbitrary constant) X (Hard limit)
         logger.debug(f"Extending session length {datetime.datetime.now()}")
         # TODO check STO.js etc for what happens when STO is None/undefined
-        return self._get(f"{Settings.web_service_path}/STO_CHK", auth_header=True, params={"pExtend": sto})
+        return utility.auth_header_get(
+            self.member_number,
+            self.role_number,
+            self._jk,
+            self._session,
+            f"{Settings.web_service_path}/STO_CHK",
+            params={"pExtend": sto},
+        )
 
     def _change_role(self, session: requests.Session, new_role: str, location: Optional[str] = None) -> Logon:
         """Returns new Logon object with new role.
@@ -236,17 +238,10 @@ class Logon(InterfaceAuthenticated):
 
 
 class LogonCore(InterfaceBase):
-    def __init__(self, session: Optional[requests.Session] = None):
-        """Initialise InterfaceBase with a session."""
-        if session is None:
-            super().__init__(self._create_session())
-        else:
-            super().__init__(session)
-
-    @staticmethod
-    def _create_session() -> requests.Session:
+    @classmethod
+    def create_session(cls: type[LogonCore]) -> LogonCore:
         """Create a session and get ASP.Net Session ID cookie from the compass server."""
-        session = requests.Session()
+        session: requests.Session = utility.CountingSession()
 
         session.head(f"{Settings.base_url}/")  # use .head() as only headers needed to grab session cookie
         Settings.total_requests += 1
@@ -257,7 +252,7 @@ class LogonCore(InterfaceBase):
                 "access Compass (including firewalls etc.) and that Compass is currently online. "
             )
 
-        return session
+        return cls(session)
 
     def logon_remote(self, auth: tuple[str, str]) -> tuple[requests.Response, schema.CompassProps, TYPES_ROLES_DICT]:
         """Log in to Compass and confirm success."""
@@ -273,7 +268,7 @@ class LogonCore(InterfaceBase):
 
         # log in
         logger.info("Logging in")
-        response = self._post(f"{Settings.base_url}/Login.ashx", headers=headers, data=credentials)
+        response = self.s.post(f"{Settings.base_url}/Login.ashx", headers=headers, data=credentials)
 
         # verify log in was successful
         props, roles = self.check_login()
@@ -284,7 +279,7 @@ class LogonCore(InterfaceBase):
         """Confirms success and updates authorisation."""
         # Test 'get' for an exemplar page that needs authorisation.
         portal_url = f"{Settings.base_url}/MemberProfile.aspx?Page=ROLES&TAB"
-        response = self._get(portal_url)
+        response = self.s.get(portal_url)
 
         # # Response body is login page for failure (~8Kb), but success is a 300 byte page.
         # if int(post_response.headers.get("content-length", 901)) > 900:
@@ -309,8 +304,8 @@ class LogonCore(InterfaceBase):
         self.update_auth_headers(member_number, role_number, session_id)
 
         # Update current role properties
-        current_role = roles_dict[role_number]
-        logger.debug(f"Using Role: {current_role[0]} ({current_role[1]})")
+        current_role_title, current_role_location = roles_dict[role_number]
+        logger.debug(f"Using Role: {current_role_title} ({current_role_location})")
 
         # Verify role number against test value
         if check_role_number is not None:
@@ -326,12 +321,12 @@ class LogonCore(InterfaceBase):
             "Authorization": f"{membership_number}~{role_number}",
             "SID": session_id,  # Session ID
         }
-        self._update_headers(auth_headers)
+        self.s.headers.update(auth_headers)
 
     @staticmethod
     def _create_compass_props(form_tree: html.FormElement) -> schema.CompassProps:
         """Create Compass info dict from FormElement."""
-        compass_props = {}
+        compass_props: dict[str, Any] = {}
         compass_vars = form_tree.fields["ctl00$_POST_CTRL"]
         for pair in compass_vars.split("~"):
             key, value = pair.split("#", 1)
@@ -342,11 +337,12 @@ class LogonCore(InterfaceBase):
             cd_tmp[levels[-1]] = value  # int or str
 
         if "Sys" in compass_props.get("Master", {}):
-            cp_m_s = compass_props["Master"]["Sys"]
-            if "WebPath" in cp_m_s:
-                cp_m_s["WebPath"] = urllib.parse.unquote(cp_m_s["WebPath"])
-            if "HardTime" in cp_m_s:
-                cp_m_s["HardTime"] = datetime.time.fromisoformat(cp_m_s["HardTime"].replace(".", ":"))
+            compass_props_master_sys = compass_props["Master"]["Sys"]
+            if "WebPath" in compass_props_master_sys:
+                compass_props_master_sys["WebPath"] = urllib.parse.unquote(compass_props_master_sys["WebPath"])
+            if "HardTime" in compass_props_master_sys:
+                hard_time_isoformat = compass_props_master_sys["HardTime"].replace(".", ":")
+                compass_props_master_sys["HardTime"] = datetime.time.fromisoformat(hard_time_isoformat)
 
         return schema.CompassProps(**compass_props)
 

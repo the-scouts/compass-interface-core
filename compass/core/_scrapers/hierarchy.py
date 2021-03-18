@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import json
 import typing
-from typing import Literal, TYPE_CHECKING, Union
+from typing import Literal, Union
 
 from lxml import html
 
 from compass.core.errors import CompassError
-from compass.core.interface_base import InterfaceAuthenticated
+from compass.core.interface_base import InterfaceBase
 from compass.core.schemas import hierarchy as schema
 from compass.core.settings import Settings
 from compass.core.utility import compass_restify
-
-if TYPE_CHECKING:
-    import requests
 
 # TYPES_ENDPOINT_LEVELS values are meaningful values as they become the API endpoint paths
 TYPES_ENDPOINT_LEVELS = Literal[
@@ -32,16 +29,7 @@ TYPES_ENDPOINT_LEVELS = Literal[
 endpoints = {i: f"/{i.replace('_', '/')}" for i in typing.get_args(TYPES_ENDPOINT_LEVELS)}
 
 
-class HierarchyScraper(InterfaceAuthenticated):
-    def __init__(self, session: requests.Session, member_number: int, role_number: int, jk: str):
-        """Constructor for HierarchyScraper.
-
-        takes an initialised Session object from Logon
-        """
-        # pylint: disable=useless-super-delegation
-        # Want to keep this method for future use
-        super().__init__(session, member_number, role_number, jk)
-
+class HierarchyScraper(InterfaceBase):
     # see CompassClient::retrieveLevel or retrieveSections in PGS\Needle php
     def get_units_from_hierarchy(
         self, parent_unit: int, level: TYPES_ENDPOINT_LEVELS
@@ -89,7 +77,7 @@ class HierarchyScraper(InterfaceAuthenticated):
         is_sections = "/sections" in level_endpoint
         model_class = schema.HierarchySection if is_sections else schema.HierarchyUnit  # chose right model to use
 
-        result = self._post(f"{Settings.base_url}/hierarchy{level_endpoint}", json={"LiveData": "Y", "ParentID": f"{parent_unit}"})
+        result = self.s.post(f"{Settings.base_url}/hierarchy{level_endpoint}", json={"LiveData": "Y", "ParentID": f"{parent_unit}"})
         result_json = result.json()
 
         # Handle unauthorised access TODO raise???
@@ -163,10 +151,10 @@ class HierarchyScraper(InterfaceAuthenticated):
 
         # Execute search
         # JSON data MUST be in the rather odd format of {"Key": key, "Value": value} for each (key, value) pair
-        self._post(f"{Settings.base_url}/Search/Members", json=compass_restify(data))
+        self.s.post(f"{Settings.base_url}/Search/Members", json=compass_restify(data))
 
         # Fetch results from Compass
-        search_results = self._get(f"{Settings.base_url}/SearchResults.aspx")
+        search_results = self.s.get(f"{Settings.base_url}/SearchResults.aspx")
 
         # Gets the compass form from the returned document
         form = html.fromstring(search_results.content).forms[0]

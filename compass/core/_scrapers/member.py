@@ -7,7 +7,7 @@ from typing import get_args, Literal, Optional, overload, TYPE_CHECKING, Union
 
 from lxml import html
 
-from compass.core.interface_base import InterfaceAuthenticated
+from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
 from compass.core.schemas import member as schema
 from compass.core.settings import Settings
@@ -57,7 +57,7 @@ mogl_map = {
 mogl_types = {"gdpr", *mogl_map.values()}
 
 
-class PeopleScraper(InterfaceAuthenticated):
+class PeopleScraper(InterfaceBase):
     """Class directly interfaces with Compass operations to extract member data.
 
     Compass's MemberProfile.aspx has 13 tabs:
@@ -89,15 +89,6 @@ class PeopleScraper(InterfaceAuthenticated):
     All functions in the class output native types.
     """
 
-    def __init__(self, session: requests.Session, member_number: int, role_number: int, jk: str):
-        """Constructor for PeopleScraper.
-
-        takes an initialised Session object from Logon
-        """
-        # pylint: disable=useless-super-delegation
-        # Want to keep this method for future use
-        super().__init__(session, member_number, role_number, jk)
-
     def _get_member_profile_tab(self, membership_num: int, profile_tab: MEMBER_PROFILE_TAB_TYPES) -> bytes:
         """Returns data from a given tab in MemberProfile for a given member.
 
@@ -122,10 +113,10 @@ class PeopleScraper(InterfaceAuthenticated):
         tabs = tuple(tab.upper() for tab in get_args(MEMBER_PROFILE_TAB_TYPES))
         url = f"{Settings.base_url}/MemberProfile.aspx?CN={membership_num}"
         if tab_upper == "PERSONAL":  # Personal tab has no key so is a special case
-            response = self._get(url)
+            response = self.s.get(url)
         elif tab_upper in tabs:
             url += f"&Page={tab_upper}&TAB"
-            response = self._get(url)
+            response = self.s.get(url)
         else:
             raise ValueError(f"Specified member profile tab {profile_tab} is invalid. Allowed values are {tabs}")
 
@@ -793,7 +784,7 @@ class PeopleScraper(InterfaceAuthenticated):
 
         start_time = time.time()
         if response is None:
-            response = self._get(f"{Settings.base_url}/Popups/Profile/AssignNewRole.aspx?VIEW={role_number}")
+            response = self.s.get(f"{Settings.base_url}/Popups/Profile/AssignNewRole.aspx?VIEW={role_number}")
             logger.debug(f"Getting details for role number: {role_number}. Request in {(time.time() - start_time):.2f}s")
 
         post_response_time = time.time()
