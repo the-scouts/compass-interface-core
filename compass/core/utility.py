@@ -4,7 +4,6 @@ import contextlib
 import ctypes
 import datetime
 import functools
-import threading
 import time
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -15,8 +14,8 @@ from compass.core.logger import logger
 from compass.core.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from collections.abc import Iterator
+    from collections.abc import Mapping
 
 
 def hash_code(text: str) -> int:
@@ -70,28 +69,28 @@ def validation_errors_logging(id_value: int, name: str = "Member No") -> Iterato
             raise err
 
 
-class PeriodicTimer:
-    def __init__(self, interval: float, callback: Callable[..., Any]):
-        """Constructor for PeriodicTimer."""
-        self.interval = interval
-
-        @functools.wraps(callback)
-        def wrapper(*args: Any, **kwargs: Any) -> None:
-            result = callback(*args, **kwargs)
-            if result is not None:
-                self.thread = threading.Timer(self.interval, self.callback)
-                self.thread.start()
-
-        self.callback = wrapper
-        self.thread: threading.Timer = threading.Timer(0.0, self.callback)
-
-    def start(self) -> "PeriodicTimer":
-        self.thread.start()
-        return self
-
-    def cancel(self) -> "PeriodicTimer":
-        self.thread.cancel()
-        return self
+# class PeriodicTimer:
+#     def __init__(self, interval: float, callback: Callable[..., Any]):
+#         """Constructor for PeriodicTimer."""
+#         self.interval = interval
+#
+#         @functools.wraps(callback)
+#         def wrapper(*args: Any, **kwargs: Any) -> None:
+#             result = callback(*args, **kwargs)
+#             if result is not None:
+#                 self.thread = threading.Timer(self.interval, self.callback)
+#                 self.thread.start()
+#
+#         self.callback = wrapper
+#         self.thread: threading.Timer = threading.Timer(0.0, self.callback)
+#
+#     def start(self) -> "PeriodicTimer":
+#         self.thread.start()
+#         return self
+#
+#     def cancel(self) -> "PeriodicTimer":
+#         self.thread.cancel()
+#         return self
 
 
 def jk_hash(session: requests.Session, membership_number: int, role_number: int, jk: str) -> str:
@@ -112,8 +111,8 @@ def auth_header_get(
     session: requests.Session,
     url: str,
     *,
-    params: Optional[dict[str, Optional[str]]] = None,
-    headers: Optional[dict[str, str]] = None,
+    params: Optional[Mapping[str, Optional[str]]] = None,
+    headers: Optional[Mapping[str, str]] = None,
     stream: Optional[bool] = None,
     **kwargs: Any,
 ) -> requests.Response:
@@ -157,9 +156,9 @@ def auth_header_get(
     """
     # pylint: disable=too-many-arguments
     # pylint complains that we have more than 5 arguments.
-    headers = (headers or {}) | {"Auth": jk_hash(session, membership_number, role_number, jk)}
+    headers = dict(headers or {}) | {"Auth": jk_hash(session, membership_number, role_number, jk)}
 
-    params = (params or {}) | {
+    params = dict(params or {}) | {
         "x1": f"{membership_number}",
         "x2": f"{jk}",
         "x3": f"{role_number}",
@@ -171,7 +170,7 @@ def auth_header_get(
 class CountingSession(requests.Session):
     """Counts the number of requests sent."""
 
-    def request(self, *args, **kwargs) -> requests.Response:
+    def request(self, *args: Any, **kwargs: Any) -> requests.Response:
         Settings.total_requests += 1
         return super().request(*args, **kwargs)
 
