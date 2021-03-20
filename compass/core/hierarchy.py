@@ -147,7 +147,7 @@ class Hierarchy:
                 level_numeric = Levels[hier_level]
             except KeyError:
                 valid_levels = [level.name for level in Levels]
-                raise ValueError(f"Passed level: {hier_level} is illegal. Valid values are {valid_levels}")
+                raise ValueError(f"Passed level: {hier_level} is illegal. Valid values are {valid_levels}") from None
         else:
             raise ValueError("A numeric or string hierarchy level needs to be passed")
 
@@ -171,8 +171,9 @@ class Hierarchy:
 
         return descendant_data
 
+    # Google hanging indent not yet (2021-03-20) in pydocstyle - https://github.com/PyCQA/pydocstyle/issues/449
     @staticmethod
-    def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[dict[str, Union[int, str]]]:  # noqa: D417
+    def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[dict[str, Union[int, str]]]:  # noqa: D417 (hanging indent)
         """Flattens a hierarchy tree / graph to a flat sequence of mappings.
 
         Args:

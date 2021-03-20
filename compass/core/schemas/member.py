@@ -41,9 +41,9 @@ TYPES_RELIGION = Union[  # type: ignore[misc]
         "No religion",
         "Prefer not to say",
     ],
-    pydantic.constr(regex=r"^Christian.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Any other religion.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^No religion.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Christian.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Any other religion.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^No religion.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
 ]
 TYPES_OCCUPATION = Union[  # type: ignore[misc]
     Literal[
@@ -55,13 +55,13 @@ TYPES_OCCUPATION = Union[  # type: ignore[misc]
         "Looking after home of family",
         "Other",
     ],
-    pydantic.constr(regex=r"^Employed.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Unemployed.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Retired.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Student.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Long term sick or disabled.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Looking after home of family.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Other.*"),  # NoQA F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Employed.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Unemployed.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Retired.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Student.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Long term sick or disabled.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Looking after home of family.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+    pydantic.constr(regex=r"^Other.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
 ]
 TYPES_ROLE_CLASS = Literal[
     "Administrator",
@@ -273,8 +273,10 @@ class MemberDetails(MemberBase):
     qualifications: Optional[dict[str, str]] = None
     hobbies: Optional[dict[str, str]] = None
 
+    # pylint doesn't support custom decorators. https://github.com/PyCQA/pylint/issues/1694
+    # pylint: disable=no-self-use
     @pydantic.validator("main_phone")
-    def check_phone_number(cls, v: Optional[str], values: dict[str, Optional[Union[str, datetime.date]]]) -> Optional[str]:
+    def check_phone_number(cls, v: Optional[str], values: dict[str, object]) -> Optional[str]:
         if v is None or not v or v == "0" or len(v) < 2:
             return None
 

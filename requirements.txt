@@ -1,24 +1,15 @@
-# core
-requests
-lxml
-# core-typing
-pydantic
-email-validator
-phonenumbers
-
-# testing
-pytest
-starlette
-uvicorn
+# core, testing
+-r requirements-test.txt
 
 # dev
 ipython
+
+# linting
 black
 isort
 pre-commit
 mypy
 
 # build
-pep517
 twine
 build

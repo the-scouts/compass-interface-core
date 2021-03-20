@@ -1,7 +1,7 @@
 repos:
     # Enforce code style
   - repo: https://github.com/psf/black
-    rev: stable
+    rev: 20.8b1
     hooks:
       - id: black
         name: Enforce code style (Black)
@@ -21,18 +21,3 @@ repos:
     hooks:
       - id: isort
         name: Enforce import ordering (isort)
-
-#    # Consistent setup.cfg formatting
-#  - repo: https://github.com/asottile/setup-cfg-fmt
-#    rev: stable
-#    hooks:
-#      - id: setup-cfg-fmt
-
-    # Code analysis (PyLint, PyCodeStyle, PyFlakes, McCabe, Dodgy
-  - repo: https://github.com/PyCQA/prospector
-    rev: 1.3.1
-    hooks:
-      - id: prospector
-        name: Code analysis (PyCQA Prospector)
-        args:
-          - --doc-warnings  # Runs PyDocStyle for docstrings

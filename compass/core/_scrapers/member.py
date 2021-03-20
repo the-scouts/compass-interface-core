@@ -740,7 +740,7 @@ def _extract_review_date(review_status: str) -> tuple[schema.TYPES_ROLE_STATUS, 
     else:
         role_status = review_status
         review_date = None
-        assert isinstance(role_status, schema.TYPES_ROLE_STATUS)
+        assert isinstance(role_status, schema.TYPES_ROLE_STATUS)  # nosec (B101, here we assert for the type checker)
     return role_status, review_date
 
 
@@ -871,7 +871,7 @@ def _process_role_data(role: html.HtmlElement) -> tuple[int, dict[str, Union[Non
     """Parses a personal learning plan from a LXML row element containing data."""
     child_nodes = list(role)
 
-    role_data: dict[str, Union[None, str, int, datetime.date]] = dict()  # NoQA
+    role_data: dict[str, Union[None, str, int, datetime.date]] = dict()
 
     role_number = int(role.get("data-ng_mrn"))
     role_data["role_number"] = role_number
@@ -903,7 +903,7 @@ def _process_role_data(role: html.HtmlElement) -> tuple[int, dict[str, Union[Non
         parts = completion_string.split(":")
         role_data["completion_type"] = parts[0].strip()
         role_data["completion_date"] = parse(parts[1].strip())
-        assert len(parts) <= 2, parts[2:]
+        assert len(parts) <= 2, parts[2:]  # nosec (B101, here we assert to check if we can remove the line below)
         # role_data["ct"] = parts[3:]  # TODO what is this? From CompassRead.php
     role_data["wood_badge_number"] = child_nodes[5].get("id", "").removeprefix("WB_") or None
 
@@ -914,11 +914,11 @@ def _extract_line_manager(line_manager_list: html.SelectElement) -> tuple[Option
     line_manager_el = next((op for op in line_manager_list if op.get("selected")), None)
     if line_manager_el is None:
         return None, None
-    else:
-        number = maybe_int(line_manager_el.get("value"))
-        name = line_manager_el.text.strip()
-        if name in unset_vals:
-            name = None
+
+    number = maybe_int(line_manager_el.get("value"))
+    name = line_manager_el.text.strip()
+    if name in unset_vals:
+        return number, None
     return number, name
 
 
