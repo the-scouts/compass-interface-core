@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 from lxml import html
 
-from compass.core.errors import CompassError
+from compass.core import errors
 from compass.core.interface_base import InterfaceBase
 from compass.core.schemas import hierarchy as schema
 from compass.core.settings import Settings
@@ -80,9 +80,9 @@ class HierarchyScraper(InterfaceBase):
         result = self.s.post(f"{Settings.base_url}/hierarchy{level_endpoint}", json={"LiveData": "Y", "ParentID": f"{parent_unit}"})
         result_json = result.json()
 
-        # Handle unauthorised access TODO raise???
+        # Handle unauthorised access
         if result_json == {"Message": "Authorization has been denied for this request."}:
-            return list()  # type: ignore[return-value]
+            raise errors.CompassPermissionError(f"You do not have permission for unit ID:{parent_unit}! E:{level} S:{is_sections}")
 
         result_units = []
         for unit_dict in result_json:
@@ -162,7 +162,7 @@ class HierarchyScraper(InterfaceBase):
 
         # If the search hasn't worked the form returns an InvalidSearchError
         if form.action == "./ScoutsPortal.aspx?Invalid=SearchError":
-            raise CompassError("Invalid Search")
+            raise errors.CompassError("Invalid Search")
 
         # Get the encoded JSON data from the HTML
         member_data_string = form.fields["ctl00$plInnerPanel_head$txt_h_Data"] or "[]"
