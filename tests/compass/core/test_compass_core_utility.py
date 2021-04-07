@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from compass.core import utility
+from compass.core.util import compass_helpers
+from compass.core.util import context_managers
+from compass.core.util import type_coercion
 
 if TYPE_CHECKING:
     import pathlib
@@ -17,7 +19,7 @@ class TestUtility:
         data = "testing"
 
         # When
-        result = utility.hash_code(data)
+        result = compass_helpers.hash_code(data)
 
         # Then
         assert isinstance(result, int)
@@ -30,7 +32,7 @@ class TestUtility:
         num_pairs = len(data)
 
         # When
-        result = utility.compass_restify(data)
+        result = compass_helpers.compass_restify(data)
 
         # Then
         assert isinstance(result, list)
@@ -44,8 +46,8 @@ class TestUtility:
         data = 123
 
         # When
-        result = utility.maybe_int(data)
-        result_str = utility.maybe_int(str(data))
+        result = type_coercion.maybe_int(data)
+        result_str = type_coercion.maybe_int(str(data))
 
         # Then
         assert result == data
@@ -56,7 +58,7 @@ class TestUtility:
         data = "abc"
 
         # When
-        result = utility.maybe_int(data)
+        result = type_coercion.maybe_int(data)
 
         # Then
         assert result is None
@@ -66,7 +68,7 @@ class TestUtility:
         data = "01 Jan 2000"
 
         # When
-        result = utility.parse(data)
+        result = type_coercion.parse(data)
 
         # Then
         assert isinstance(result, datetime.date)
@@ -77,7 +79,7 @@ class TestUtility:
         data = "01 January 2000"
 
         # When
-        result = utility.parse(data)
+        result = type_coercion.parse(data)
 
         # Then
         assert isinstance(result, datetime.date)
@@ -90,14 +92,14 @@ class TestUtility:
         # Then
         with pytest.raises(ValueError, match=f"time data '{data}' does not match format '%d %b %Y'"):
             # When
-            utility.parse(data)
+            type_coercion.parse(data)
 
     def test_parse_empty(self):
         # Given
         data = ""
 
         # When
-        result = utility.parse(data)
+        result = type_coercion.parse(data)
 
         # Then
         assert result is None
@@ -109,7 +111,7 @@ class TestUtility:
         filename.write_text(test_text, encoding="utf-8")
 
         # When we read the file with filesystem_guard
-        with utility.filesystem_guard("message (test_filesystem_guard_file)"):
+        with context_managers.filesystem_guard("message (test_filesystem_guard_file)"):
             out = filename.read_text(encoding="utf-8")
 
         # Then check filesystem_guard hasn't mutated the text
@@ -120,7 +122,7 @@ class TestUtility:
         filename = tmp_path / "non-existent.txt"
 
         # When we read the file with filesystem_guard
-        with utility.filesystem_guard("message (test_filesystem_guard_no_file)"):
+        with context_managers.filesystem_guard("message (test_filesystem_guard_no_file)"):
             filename.read_text(encoding="utf-8")
 
         # Then check filesystem_guard hasn't logged the error with the custom message
@@ -133,7 +135,7 @@ class TestUtility:
         filename.write_text(test_text, encoding="utf-8")
 
         # When we read the file with filesystem_guard with chained `with` statements
-        with utility.filesystem_guard("message (test_filesystem_guard_file)"), open(filename, "r", encoding="utf-8") as f:
+        with context_managers.filesystem_guard("message (test_filesystem_guard_file)"), open(filename, "r", encoding="utf-8") as f:
             out = f.read()
 
         # Then check filesystem_guard hasn't mutated the text

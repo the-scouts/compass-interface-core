@@ -8,13 +8,14 @@ from lxml import html
 import requests
 
 from compass.core import schemas
-from compass.core import utility
 from compass.core.errors import CompassAuthenticationError
 from compass.core.errors import CompassError
 from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
 import compass.core.schemas.logon as schema
 from compass.core.settings import Settings
+from compass.core.util import auth_header
+from compass.core.util import counting_session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -86,7 +87,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
         self.roles_dict: TYPES_ROLES_DICT = roles_dict or {}
         self.current_role: TYPES_ROLE = current_role or ("", "")
 
-        # self._sto_thread = utility.PeriodicTimer(150, self._extend_session_timeout)
+        # self._sto_thread = timeout.PeriodicTimer(150, self._extend_session_timeout)
         # self._sto_thread.start()
 
         self._asp_net_id: str = session.cookies["ASP.NET_SessionId"]
@@ -172,7 +173,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
                 For errors while executing the HTTP call
 
         """
-        session: requests.Session = utility.CountingSession()
+        session: requests.Session = counting_session.CountingSession()
         session.cookies.set("ASP.NET_SessionId", asp_net_id, domain=Settings.base_domain)  # type: ignore[no-untyped-call]
 
         logon = cls(
@@ -203,7 +204,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
         # Session time out. 4 values: None (normal), 0 (STO prompt) 5 (Extension, arbitrary constant) X (Hard limit)
         logger.debug(f"Extending session length {datetime.datetime.now()}")
         # TODO check STO.js etc for what happens when STO is None/undefined
-        return utility.auth_header_get(
+        return auth_header.auth_header_get(
             self.membership_number,
             self.role_number,
             self._jk,
@@ -252,7 +253,7 @@ class LogonCore(InterfaceBase):
     @classmethod
     def create_session(cls: type[LogonCore]) -> LogonCore:
         """Create a session and get ASP.Net Session ID cookie from the compass server."""
-        session: requests.Session = utility.CountingSession()
+        session: requests.Session = counting_session.CountingSession()
 
         session.head(f"{Settings.base_url}/")  # use .head() as only headers needed to grab session cookie
         Settings.total_requests += 1
