@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Optional
+
 import pydantic
 
 
@@ -11,6 +14,7 @@ class _SettingsModel(pydantic.BaseSettings):
     web_service_path: pydantic.HttpUrl = base_url + wcf_json_endpoint  # type: ignore[assignment]
     debug: bool = False
     validation_errors: bool = True
+    log_file: Optional[Path] = None
 
     class Config:
         case_sensitive = False  # this is the default, but mark for clarity.
