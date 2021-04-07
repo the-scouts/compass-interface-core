@@ -32,18 +32,36 @@ MEMBER_PROFILE_TAB_TYPES = Literal[
 # get_roles_tab
 STATUSES = set(get_args(schema.TYPES_ROLE_STATUS))
 NON_VOLUNTEER_TITLES = {
-    # occasional helper roles
+    # occasional helper roles:
     "group occasional helper",
     "group occasional helper.",
     "district occasional helper",
     "county occasional helper",
-    "pvg",  # TODO is this ever a role title?
-    "occasional helper",  # TODO is this ever a role title?
+    "country occasional helper",
+    # pvg roles:
+    "group non member pvg only"
+    "group non member pvg only (prov)"
+    "group non member pvg only (pre-prov)"
+    "group non memberdetails pvg only"
+    "district non member pvg only"
+    "scotland region non-member pvg"
+    "non member pvg only"
+    "non member pvg only (prov)"
+    "non member pvg only (pre-prov)"
     # council roles:
     "county scout council member",
     "county scout council member - nominated representative",
     "county scout council member - nominated youth representative",
     "county scout council member - nominated member (18-24)",
+    "country scout council member - nominated representative",
+    "scotland region scout council member",
+    "scotland region scout council member - nominated representative ",
+    "scotland region scout council member - nominated youth representative ",
+    "tsa council member",
+    "tsa council member - elected member",
+    "tsa council member - ex-officio member",
+    "tsa council member - nominated member",
+    "tsa council member - nominated member (18-24)",
     # staff roles:
     "district staff",
     "county staff",
@@ -53,7 +71,8 @@ NON_VOLUNTEER_TITLES = {
     "district scout network",
     "district scout network member",
     "county scout network member",
-}  # TODO add PVG, TSA council, etc
+    "bso scout network member",
+}
 
 # get_training_tab
 mogl_modules = {
@@ -139,11 +158,7 @@ class PeopleScraper(InterfaceBase):
             profile_tab: Tab requested from Compass
 
         Returns:
-            A dict with content and encoding, e.g.:
-
-            {"content": b"...", "encoding": "utf-8"}
-
-            Both keys will always be present.
+            Response from the remote server as bytes serialised blob
 
         Raises:
             requests.exceptions.RequestException:
@@ -171,10 +186,9 @@ class PeopleScraper(InterfaceBase):
             membership_number: Membership Number to use
 
         Returns:
-            A dict mapping keys to the corresponding data from the personal
-            data tab.
+            A MemberDetails object keys to the corresponding data from the personal
+            data tab:
 
-            E.g.:
             MemberDetails(
                 membership_number=...,
                 name="...",
@@ -191,9 +205,8 @@ class PeopleScraper(InterfaceBase):
                 postcode="...",
                 main_phone="...",
                 main_email="..."
-                address=...
+                address=MemberDetailsAddress(...)
             )
-
 
             Keys will be present only if valid data could be extracted and
             parsed from Compass.
@@ -283,9 +296,9 @@ class PeopleScraper(InterfaceBase):
             statuses: Explicit set of role statuses to keep
 
         Returns:
-            A dict of dicts mapping keys to the corresponding data from the roles tab.
+            A MemberRolesCollection object with the data from the roles tab
+            (keys will always be present):
 
-            E.g.:
             MemberRolesCollection(
                 roles={
                     1234578: MemberRoleCore(
@@ -306,8 +319,6 @@ class PeopleScraper(InterfaceBase):
                 },
                 membership_duration=...
             )
-
-            Keys will always be present.
 
         Raises:
             requests.exceptions.RequestException:
@@ -365,7 +376,7 @@ class PeopleScraper(InterfaceBase):
             if primary_role is True:
                 primary_role = role_details.role_number
             # Remove OHs etc from list
-            if "helper" in role_details.role_class.lower() or {role_details.role_title.lower()} <= NON_VOLUNTEER_TITLES:
+            if "helper" in role_details.role_class.lower() or role_details.role_title.lower() in NON_VOLUNTEER_TITLES:
                 if keep_non_volunteer_roles is False:
                     continue
             # If role is a full volunteer role, potentially add to date list
@@ -397,9 +408,7 @@ class PeopleScraper(InterfaceBase):
 
         Returns:
             A list of dicts mapping keys to the corresponding data from the
-            permits tab.
-
-            Keys will always be present.
+            permits tab (keys will always be present).
 
         Raises:
             requests.exceptions.RequestException:
@@ -448,10 +457,9 @@ class PeopleScraper(InterfaceBase):
             ongoing_only: Return a dataframe of role training & OGL info? Otherwise returns all data
 
         Returns:
-            A dict mapping keys to the corresponding data from the training
-            tab.
+            A model with the data from the training tab (keys will always be
+            present):
 
-            E.g.:
             {'roles': {1234567: {'role_number': 1234567,
                'role_title': '...',
                'role_start': datetime.datetime(...),
@@ -478,8 +486,6 @@ class PeopleScraper(InterfaceBase):
               {'name': 'GDPR',
               'completed_date': datetime.datetime(...)},
               ...}}
-
-            Keys will always be present.
 
         Raises:
             requests.exceptions.RequestException:
@@ -524,17 +530,15 @@ class PeopleScraper(InterfaceBase):
             membership_number: Membership Number to use
 
         Returns:
-            A MemberAward object with corresponding data from the awards tab.
+            A MemberAward object with corresponding data from the awards tab
+            (keys will always be present):
 
-            E.g.:
             MemberAward(
                 membership_number=...,
                 type="...",
                 location="...",
                 date=datetime.date(...),
             )
-
-            Keys will always be present.
 
         Raises:
             requests.exceptions.RequestException:
@@ -568,10 +572,9 @@ class PeopleScraper(InterfaceBase):
             membership_number: Membership Number to use
 
         Returns:
-            A MemberAward object with corresponding data from the disclosures
-            tab.
+            A MemberDisclosure object with corresponding data from the
+            disclosures tab (keys will always be present):
 
-            E.g.:
             MemberDisclosure(
                 membership_number=...,
                 country="...",
@@ -583,8 +586,6 @@ class PeopleScraper(InterfaceBase):
                 status="...",
                 expiry_date=datetime.date(...),
             )
-
-            Keys will always be present.
 
         Raises:
             requests.exceptions.RequestException:
@@ -626,10 +627,9 @@ class PeopleScraper(InterfaceBase):
             role_number: Role Number to use
 
         Returns:
-            A dicts mapping keys to the corresponding data from the
-            role detail data.
+            A MemberRolePopup model with the data from the role detail popup
+            (keys will always be present):
 
-            E.g.:
             {'hierarchy': {'organisation': 'The Scout Association',
               'country': '...',
               'region': '...',
@@ -658,8 +658,6 @@ class PeopleScraper(InterfaceBase):
                'validated_by': '...'},
                ...
               }}
-
-            Keys will always be present.
 
         Raises:
             requests.exceptions.RequestException:
@@ -714,10 +712,7 @@ class PeopleScraper(InterfaceBase):
         # Filter null values
         role_details = {k: v for k, v in role_details.items() if v is not None}
 
-        logger.debug(
-            f"Processed details for role number: {role_number}. "
-            # f"Compass: {(post_response_time - start_time):.3f}s; Processing: {(time.time() - post_response_time):.4f}s"
-        )
+        logger.debug(f"Processed details for role number: {role_number}.")
         # TODO data-ng_id?, data-rtrn_id?
         with validation_errors_logging(role_number, name="Role Number"):
             return schema.MemberRolePopup.parse_obj(
@@ -771,9 +766,8 @@ def _extract_review_date(review_status: str) -> tuple[schema.TYPES_ROLE_STATUS, 
 def _reduce_date_list(dl: Iterable[tuple[datetime.date, datetime.date]]) -> Iterator[tuple[datetime.date, datetime.date]]:
     """Reduce list of start and end dates to disjoint ranges.
 
-    Iterate through date pairs and get longest consecutive date ranges.
-    For disjoint ranges, call function recursively. Returns all found date
-    pairs.
+    Iterate through date pairs and get longest consecutive date ranges. For
+    disjoint ranges, call function recursively. Returns all found date pairs.
 
     Args:
         dl: list of start, end date pairs
@@ -822,7 +816,7 @@ def _membership_duration(dates: Iterable[tuple[datetime.date, datetime.date]]) -
 def _compile_ongoing_learning(training_plps: TYPES_TRAINING_PLPS, tree: html.HtmlElement) -> TYPES_TRAINING_OGL:
     """Compiles ongoing learning data.
 
-    Uses PLP records for GDPR, and main OGL section for Safety, Safeguardin,
+    Uses PLP records for GDPR, and main OGL section for Safety, Safeguarding,
     and First Aid.
 
     Args:

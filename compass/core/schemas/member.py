@@ -211,7 +211,14 @@ TYPES_AWARD_TYPE = Literal[
     "Medal of Merit",
     "Bar to the Medal of Merit",
 ]
-TYPES_DISCLOSURE_PROVIDERS = Literal["Atlantic Data", "DBS Paper Application", "Disclosure Scotland", "Other"]
+TYPES_DISCLOSURE_PROVIDERS = Literal[
+    "Access NI",
+    "Atlantic Data",
+    "DBS Paper Application",
+    "Disclosure Scotland",
+    "Local Check",  # BSO
+    "Other",
+]
 TYPES_DISCLOSURE_STATUSES = Literal[
     "Application Withdrawn",
     "Application received at HQ",
@@ -219,6 +226,7 @@ TYPES_DISCLOSURE_STATUSES = Literal[
     "Disclosure Expired",
     "Disclosure Issued",
     "Expired",
+    "Final applicant information required",  # BSO
     "ID check required",
     "ID selection required",
 ]  # Disclosure statuses in disclosures tab
@@ -268,8 +276,8 @@ class MemberDetails(MemberBase):
     main_email: Optional[pydantic.EmailStr] = None
     address: MemberDetailsAddress = MemberDetailsAddress()
 
-    # Additional / miscellaneous details
-    disabilities: Optional[dict[str, str]] = None  # TODO keyed models
+    # Additional / miscellaneous details (TODO keyed models)
+    disabilities: Optional[dict[str, str]] = None
     qualifications: Optional[dict[str, str]] = None
     hobbies: Optional[dict[str, str]] = None
 
@@ -451,8 +459,7 @@ class MemberAward(MemberBase):
 
 
 class MemberDisclosure(MemberBase):
-    # TODO Scot, Wales, NI, BSO, Branches, Channel Islands
-    country: Optional[Literal["England & Wales", "Scotland", "The Scout Association"]]
+    country: Optional[Literal["England & Wales", "Northern Ireland", "Overseas", "Scotland", "The Scout Association"]]
     provider: TYPES_DISCLOSURE_PROVIDERS
     type: Literal["Enhanced with Barring"]
     # If Application Withdrawn, no disclosure number. If Scottish in the early 2000s, 7 digits ending with an R
