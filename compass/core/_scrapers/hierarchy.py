@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-import typing
-from typing import Literal, Union
+from typing import get_args, Literal
 
 from lxml import html
 
@@ -26,21 +25,31 @@ TYPES_ENDPOINT_LEVELS = Literal[
     "district_sections",
     "group_sections",
 ]
-endpoints = {i: f"/{i.replace('_', '/')}" for i in typing.get_args(TYPES_ENDPOINT_LEVELS)}
+endpoints = {i: f"/{i.replace('_', '/')}" for i in get_args(TYPES_ENDPOINT_LEVELS)}
+section_type_map = {
+    "Early Years Pilot": "EY Pilot",
+    "Beavers": "Beavers",
+    "Beaver Scout": "Beavers",
+    "Cub Scout": "Cubs",
+    "Scout": "Scouts",
+    "Explorer Scouts": "Explorers",
+    "Scout Network": "Network",
+    "Scout Active Support": "ASU",
+    "All": "Other",
+    "Other": "Other",
+}
 
 
 class HierarchyScraper(InterfaceBase):
     # see CompassClient::retrieveLevel or retrieveSections in PGS\Needle php
-    def get_units_from_hierarchy(
-        self, parent_unit: int, level: TYPES_ENDPOINT_LEVELS
-    ) -> Union[list[schema.HierarchySection], list[schema.HierarchyUnit]]:
+    def get_units_from_hierarchy(self, parent_unit: int, level: TYPES_ENDPOINT_LEVELS) -> list[schema.HierarchyUnit]:
         """Get all children of a given unit.
 
         If LiveData=Y is passed, the resulting JSON additionally contains:
             - (duplicated) parent id
             - the unit address
             - number of members
-            - SectionType1 and SectionTypeDesc1 keys, if requesting sections data
+            - section type details, if requesting sections data
 
         Args:
             parent_unit: The unit ID to get descendants from
@@ -89,16 +98,13 @@ class HierarchyScraper(InterfaceBase):
             parsed = {
                 "unit_id": int(unit_dict["Value"]),
                 "name": unit_dict["Description"],
-                "parent_id": unit_dict["Parent"],
             }
             if unit_dict["Tag"]:
                 tag = json.loads(unit_dict["Tag"])[0]
-                parsed["status"] = tag["org_status"]
-                parsed["address"] = tag["address"]
-                parsed["member_count"] = tag["Members"]
                 # Only include section_type if there is section type data
-                if "SectionTypeDesc" in tag:
-                    parsed["section_type"] = tag["SectionTypeDesc"]
+                if "SectionTypeDesc" in tag or "SectionTypeDesc1" in tag:
+                    section_type = tag.get("SectionTypeDesc") or tag.get("SectionTypeDesc1") or "MISSING"
+                    parsed["section_type"] = section_type_map.get(section_type, section_type)
 
             result_units.append(model_class(**parsed))
         return result_units

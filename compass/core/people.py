@@ -2,25 +2,20 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 
-from compass.core._scrapers.member import PeopleScraper
-from compass.core._scrapers.member import STATUSES
-from compass.core.schemas.member import TYPES_ROLE_STATUS
+from compass.core._scrapers import member as scraper
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from compass.core.logon import Logon
     from compass.core.schemas import member as schema
 
 # SCRAPER CLASS - 1-1 mapping with compass to minimise calls
 # MAIN CLASS - object/properties focused, with abstractions of actual calls
-# UTILITY CLASS - get_member_data, get_roles_from_members, etc
 
 
 class People:
     def __init__(self, session: Logon):
         """Constructor for People."""
-        self._scraper = PeopleScraper(session._session)
+        self._scraper = scraper.PeopleScraper(session._session)
         self.membership_number = session.membership_number
 
     def personal(self, membership_number: int) -> schema.MemberDetails:
@@ -46,19 +41,21 @@ class People:
     def roles(
         self,
         membership_number: int,
-        keep_non_volunteer_roles: bool = False,
+        *,
+        only_volunteer_roles: bool = True,
         only_active: bool = False,
-        statuses: Optional[Iterable[TYPES_ROLE_STATUS]] = None,
     ) -> schema.MemberRolesCollection:
-        """Gets the data from the Role tab in Compass for the specified member.
+        """Gets the data from the Role tab in Compass for the given member.
 
-        Sanitises the data to a common format, and removes Occasional Helper, Network, and PVG roles by default.
+        Parses the data to a common format, and removes Occasional Helper, PVG,
+        Network, Council and Staff roles by default.
 
         Args:
             membership_number: Membership Number to use
-            keep_non_volunteer_roles: Keep Helper (OH/PVG) & Network roles?
-            only_active: Keep only active (Full, Provisional, Pre-Provisional) roles?
-            statuses: Explicit set of role statuses to keep
+            only_volunteer_roles: If True, only volunteer roles are returned,
+                and Helper, Council, Network, etc are dropped.
+            only_active: If True, inactive roles (Closed, Cancelled) are not
+                returned.
 
         Returns:
             A MemberRolesDict object containing all data.
@@ -71,14 +68,17 @@ class People:
                 data for the requested member.
 
         """
-        if only_active:
-            # List taken from `ROLE_HIDEME` css class - only applied to Cancelled/Closed roles
-            unique_statuses: Optional[set[str]] = STATUSES - {"Closed", "Cancelled"}
-        elif statuses is None:
-            unique_statuses = None
-        else:
-            unique_statuses = set(statuses)
-        return self._scraper.get_roles_tab(membership_number, keep_non_volunteer_roles, unique_statuses)
+        roles_data = self._scraper.get_roles_tab(membership_number, only_volunteer_roles)
+        if only_active is False:
+            return roles_data
+        # Role status filter
+        status_blacklist = {"Closed", "Cancelled"}  # Inactive roles inferred from `ROLE_HIDEME` css class
+        filtered_roles = {number: model for number, model in roles_data.roles.items() if model.role_status not in status_blacklist}
+        # if role list hasn't changed return original model
+        if filtered_roles.keys() == roles_data.roles.keys():
+            return roles_data
+        # don't mutate cached model
+        return roles_data.__class__.parse_obj(roles_data.__dict__ | {"roles": filtered_roles})
 
     def role_detail(self, role_number: int) -> schema.MemberRolePopup:
         """Get detailed information for specified role.
@@ -128,21 +128,7 @@ class People:
             A MemberTrainingTab object containing all data.
 
         """
-        return self._scraper.get_training_tab(membership_number, ongoing_only=False)
-
-    def ongoing_learning(self, membership_number: int) -> schema.MemberMandatoryTraining:
-        """Gets ongoing learning data for a given member.
-
-        Args:
-            membership_number: Membership Number to use
-
-        Returns:
-            requests.exceptions.RequestException:
-                For errors while executing the HTTP call
-            A MemberMOGLList object containing all data.
-
-        """
-        return self._scraper.get_training_tab(membership_number, ongoing_only=True)
+        return self._scraper.get_training_tab(membership_number)
 
     def awards(self, membership_number: int) -> list[schema.MemberAward]:
         """Gets awards tab data for a given member.
@@ -182,6 +168,45 @@ class People:
         """
         return self._scraper.get_disclosures_tab(membership_number)
 
+    # Convenience methods:
+
+    def adult_service_length(self, membership_number: int) -> float:
+        """Returns length of service in qualifying roles in years.
+
+        Excludes non-volunteer roles (e.g. Occasional Helper, PVG, Network),
+        and returns total membership duration in fractional years. Correctly
+        accounts for role overlap and gaps in service, as well as role statuses
+
+        Args:
+            membership_number: Membership Number to use
+
+        Returns:
+            Length of service in fractional years
+
+        Raises:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
+            PermissionError:
+                If the current user does not have permission to view roles
+                data for the requested member.
+
+        """
+        return self._scraper.get_roles_tab(membership_number).membership_duration
+
+    def ongoing_learning(self, membership_number: int) -> schema.MemberMandatoryTraining:
+        """Gets ongoing learning data for a given member.
+
+        Args:
+            membership_number: Membership Number to use
+
+        Returns:
+            requests.exceptions.RequestException:
+                For errors while executing the HTTP call
+            A MemberMOGLList object containing all data.
+
+        """
+        return self._scraper.get_training_tab(membership_number).mandatory
+
     def latest_disclosure(self, membership_number: int) -> Optional[schema.MemberDisclosure]:
         """Gets latest disclosure for a given member.
 
@@ -203,26 +228,4 @@ class People:
         """
         disclosures = self.disclosures(membership_number)
         date_map = {disc.expiry_date: disc for disc in disclosures if disc.expiry_date}
-        if not date_map:
-            return None
-        return date_map[max(date_map)]
-
-
-# class Member:
-#     def personal_details(self):
-#         pass
-#
-#     def role_details(self):
-#         pass
-#
-#     def ongoing_learning(self):
-#         pass
-#
-#     def training(self):
-#         pass
-#
-#     def permits(self):
-#         pass
-#
-#     # def awards(self):
-#     #     pass
+        return date_map[max(date_map)] if date_map else None

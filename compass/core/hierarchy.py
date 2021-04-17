@@ -1,25 +1,18 @@
 from __future__ import annotations
 
 import enum
-import json
 from pathlib import Path
-from typing import cast, Iterable, Literal, Optional, TYPE_CHECKING, TypedDict, Union
-
-from pydantic.json import pydantic_encoder
+from typing import Iterable, Optional, TYPE_CHECKING, TypedDict, Union
 
 from compass.core import errors
-from compass.core._scrapers.hierarchy import HierarchyScraper
-from compass.core._scrapers.hierarchy import TYPES_ENDPOINT_LEVELS
+from compass.core._scrapers import hierarchy as scraper
 from compass.core.logger import logger
 from compass.core.logon import Logon
 from compass.core.schemas import hierarchy as schema
-from compass.core.settings import Settings
-from compass.core.util import context_managers
+from compass.core.util import cache_hooks
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-TYPES_UNIT_LEVELS = Literal["Group", "District", "County", "Region", "Country", "Organisation"]
 
 
 class HierarchyState(TypedDict, total=False):
@@ -68,14 +61,14 @@ class UnitSections(enum.IntEnum):
 class Hierarchy:
     def __init__(self, session: Logon):
         """Constructor for Hierarchy."""
-        self._scraper: HierarchyScraper = HierarchyScraper(session._session)
+        self._scraper: scraper.HierarchyScraper = scraper.HierarchyScraper(session._session)
         self.session: Logon = session
 
     def get_unit_data(
         self,
         unit_level: Optional[schema.HierarchyLevel] = None,
         unit_id: Optional[int] = None,
-        level: Optional[TYPES_UNIT_LEVELS] = None,
+        level: Optional[schema.TYPES_UNIT_LEVELS] = None,
         use_default: bool = False,
     ) -> schema.HierarchyLevel:
         """Helper function to construct unit level data.
@@ -117,7 +110,7 @@ class Hierarchy:
         self,
         unit_level: Optional[schema.HierarchyLevel] = None,
         unit_id: Optional[int] = None,
-        level: Optional[TYPES_UNIT_LEVELS] = None,
+        level: Optional[schema.TYPES_UNIT_LEVELS] = None,
         use_default: bool = False,
     ) -> schema.UnitData:
         """Gets all units at given level and below, including sections.
@@ -140,24 +133,22 @@ class Hierarchy:
 
         filename = Path(f"hierarchy-{unit_level.unit_id}.json")
         # Attempt to see if the hierarchy has been fetched already and is on the local system
-        with context_managers.get_cached_json(filename, expected_type=dict) as cached_data:
-            if cached_data is not None:
-                return schema.UnitData.parse_obj(cached_data)
+        cached_data = cache_hooks.get_val(filename=filename)
+        if cached_data is not None and isinstance(cached_data, dict):
+            return schema.UnitData.parse_obj(cached_data)
 
         # Fetch the hierarchy
         out = self._get_descendants_recursive(unit_level.unit_id, hier_level=unit_level.level)
-        if Settings.cache_to_file is False:
-            return schema.UnitData.parse_obj(out)
+        model = schema.UnitData.parse_obj(out)
 
         # Try and write to a file for caching
-        with context_managers.filesystem_guard("Unable to write cache file"):
-            filename.write_text(schema.UnitData.parse_obj(out).json(ensure_ascii=False), encoding="utf-8")
+        cache_hooks.set_val(model, filename=filename)
 
-        return schema.UnitData.parse_obj(out)
+        return model
 
     # See recurseRetrieve in PGS\Needle
     def _get_descendants_recursive(
-        self, unit_id: int, hier_level: Optional[TYPES_UNIT_LEVELS] = None, hier_num: Optional[Levels] = None
+        self, unit_id: int, hier_level: Optional[schema.TYPES_UNIT_LEVELS] = None, hier_num: Optional[Levels] = None
     ) -> dict[str, object]:
         """Recursively get all children from given unit ID and level name/number, with caching."""
         if hier_num is not None:
@@ -188,7 +179,7 @@ class Hierarchy:
                 grandchildren = self._get_descendants_recursive(child.unit_id, hier_num=child_level)
                 children_updated.append(child.dict() | grandchildren)
             descendant_data["child"] = children_updated
-        section_level: TYPES_ENDPOINT_LEVELS = UnitSections(level_numeric).name  # type: ignore[assignment]
+        section_level: scraper.TYPES_ENDPOINT_LEVELS = UnitSections(level_numeric).name  # type: ignore[assignment]
         descendant_data["sections"] = self._scraper.get_units_from_hierarchy(unit_id, section_level)
 
         return descendant_data
@@ -197,7 +188,7 @@ class Hierarchy:
         self,
         unit_level: Optional[schema.HierarchyLevel] = None,
         unit_id: Optional[int] = None,
-        level: Optional[TYPES_UNIT_LEVELS] = None,
+        level: Optional[schema.TYPES_UNIT_LEVELS] = None,
         use_default: bool = False,
     ) -> set[int]:
         """Get all unique members for a given level and its descendants.
@@ -239,10 +230,10 @@ class Hierarchy:
     def get_members_in_units(self, parent_id: int, compass_ids: Iterable[int]) -> list[schema.HierarchyUnitMembers]:
         filename = Path(f"all-members-{parent_id}.json")
 
-        with context_managers.get_cached_json(filename, expected_type=list) as cached_data:
-            # Attempt to see if the members dict has been fetched already and is on the local system
-            if cached_data is not None:
-                return [schema.HierarchyUnitMembers.parse_obj(unit_members) for unit_members in cached_data]
+        cached_data = cache_hooks.get_val(filename=filename)
+        # Attempt to see if the members dict has been fetched already and is on the local system
+        if cached_data is not None and isinstance(cached_data, list):
+            return [schema.HierarchyUnitMembers.parse_obj(unit_members) for unit_members in cached_data]
 
         # Fetch all members
         all_members = []
@@ -251,12 +242,8 @@ class Hierarchy:
             data = schema.HierarchyUnitMembers(unit_id=unit_id, member=self._scraper.get_members_with_roles_in_unit(unit_id))
             all_members.append(data)
 
-        if Settings.cache_to_file is False:
-            return all_members
-
         # Try and write to a file for caching
-        with context_managers.filesystem_guard("Unable to write cache file"):
-            filename.write_text(json.dumps(all_members, ensure_ascii=False, indent=4, default=pydantic_encoder), encoding="utf-8")
+        cache_hooks.set_val(all_members, filename=filename)
 
         return all_members
 
@@ -278,11 +265,11 @@ def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[HierarchyStat
         unit_id = d.unit_id
         name = d.name if isinstance(d, schema.DescendantData) else None
         level_data = hierarchy_state | {f"{level_name}_ID": unit_id, f"{level_name}_name": name}  # type: ignore[operator]
-        yield cast(HierarchyState, {"compass": unit_id, "name": name, "section": False} | level_data)
+        yield {"compass": unit_id, "name": name, "section": False} | level_data
         for child in d.child or []:
-            yield from flatten(child, cast(HierarchyState, level_data))
+            yield from flatten(child, level_data)
         for section in d.sections:
-            yield cast(HierarchyState, {"compass": section.unit_id, "name": section.name, "section": True} | level_data)
+            yield {"compass": section.unit_id, "name": section.name, "section": True} | level_data
 
     blank_state: HierarchyState = dict()
     return flatten(hierarchy_dict, blank_state)

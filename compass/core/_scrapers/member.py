@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import cast, get_args, Literal, Optional, overload, TYPE_CHECKING, TypedDict, Union
+from typing import get_args, Literal, Optional, TYPE_CHECKING, TypedDict, Union
 
 from lxml import html
 
@@ -11,6 +11,7 @@ from compass.core.interface_base import InterfaceBase
 from compass.core.logger import logger
 from compass.core.schemas import member as schema
 from compass.core.settings import Settings
+from compass.core.util import cache_hooks
 from compass.core.util.context_managers import validation_errors_logging
 from compass.core.util.type_coercion import maybe_int
 from compass.core.util.type_coercion import parse
@@ -19,18 +20,19 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from collections.abc import Iterator
 
-TYPES_TRAINING_MODULE = dict[str, Union[None, int, str, datetime.date]]
-TYPES_TRAINING_PLPS = dict[int, list[TYPES_TRAINING_MODULE]]
-TYPES_TRAINING_OGL_DATES = dict[Literal["completed_date", "renewal_date"], Optional[datetime.date]]
-TYPES_TRAINING_OGL = dict[str, TYPES_TRAINING_OGL_DATES]
+    TYPES_TRAINING_MODULE = dict[str, Union[None, int, str, datetime.date]]
+    TYPES_TRAINING_PLPS = dict[int, list[TYPES_TRAINING_MODULE]]
+    TYPES_TRAINING_OGL_DATES = dict[Literal["completed_date", "renewal_date"], Optional[datetime.date]]
+    TYPES_TRAINING_OGL = dict[str, TYPES_TRAINING_OGL_DATES]
 
 # _get_member_profile_tab
 MEMBER_PROFILE_TAB_TYPES = Literal[
     "Personal", "Roles", "Permits", "Training", "Awards", "Emergency", "Comms", "Visibility", "Disclosures"
 ]
+TABS = {tab.upper() for tab in get_args(MEMBER_PROFILE_TAB_TYPES)}
 
 # get_roles_tab
-STATUSES = set(get_args(schema.TYPES_ROLE_STATUS))
+ROLE_STATUSES = set(get_args(schema.TYPES_ROLE_STATUS))
 NON_VOLUNTEER_TITLES = {
     # occasional helper roles:
     "group occasional helper",
@@ -82,10 +84,6 @@ mogl_modules = {
     "gdpr": "gdpr",  # phony entry, used for key
 }
 
-# get_roles_detail
-renamed_levels = {
-    "County / Area / Scottish Region / Overseas Branch": "County",
-}
 renamed_modules = {
     "001": "module_01",
     "TRST": "trustee_intro",
@@ -163,21 +161,17 @@ class PeopleScraper(InterfaceBase):
         Raises:
             requests.exceptions.RequestException:
                 For errors while executing the HTTP call
-            ValueError: The given profile_tab value is illegal
+            CompassError: The given profile_tab value is illegal
 
         """
         tab_upper: str = profile_tab.upper()  # No longer type MEMBER_PROFILE_TAB_TYPES as upper case
-        tabs = tuple(tab.upper() for tab in get_args(MEMBER_PROFILE_TAB_TYPES))
         url = f"{Settings.base_url}/MemberProfile.aspx?CN={membership_number}"
-        if tab_upper == "PERSONAL":  # Personal tab has no key so is a special case
-            response = self.s.get(url)
-        elif tab_upper in tabs:
+        if tab_upper in TABS:
             url += f"&Page={tab_upper}&TAB"
-            response = self.s.get(url)
-        else:
-            raise errors.CompassError(f"Specified member profile tab {profile_tab} is invalid. Allowed values are {tabs}")
+        elif tab_upper != "PERSONAL":  # Personal tab has no key so is a special case
+            raise errors.CompassError(f"Specified member profile tab {profile_tab} is invalid. Allowed values are {TABS}")
 
-        return response.content
+        return self.s.get(url).content
 
     def get_personal_tab(self, membership_number: int) -> schema.MemberDetails:
         """Returns data from Personal Details tab for a given member.
@@ -218,10 +212,11 @@ class PeopleScraper(InterfaceBase):
                 Access to the member is not given by the current authentication
 
         """
+        if (cached := cache_hooks.get_val(key=("personal", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Personal")
-
         tree = html.fromstring(response)
-
         if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
             raise errors.CompassPermissionError(f"You do not have permission to the details of {membership_number}")
 
@@ -282,22 +277,17 @@ class PeopleScraper(InterfaceBase):
                     details[additional] = {}
 
         with validation_errors_logging(membership_number):
-            return schema.MemberDetails.parse_obj(details)
+            return cache_hooks.set_val(schema.MemberDetails.parse_obj(details), key=("personal", membership_number))
 
-    def get_roles_tab(
-        self,
-        membership_number: int,
-        keep_non_volunteer_roles: bool = False,
-        statuses: Optional[set[str]] = None,
-    ) -> schema.MemberRolesCollection:
+    def get_roles_tab(self, membership_number: int, only_volunteer_roles: bool = True) -> schema.MemberRolesCollection:
         """Returns data from Roles tab for a given member.
 
-        Sanitises the data to a common format, and removes Occasional Helper, Network, and PVG roles by default.
+        Parses the data to a common format, and removes Occasional Helper, PVG,
+        Network, Council and Staff roles by default.
 
         Args:
             membership_number: Membership Number to use
-            keep_non_volunteer_roles: Keep Helper (OH/PVG) & Network roles?
-            statuses: Explicit set of role statuses to keep
+            only_volunteer_roles: If True, drop non-volunteer roles
 
         Returns:
             A MemberRolesCollection object with the data from the roles tab
@@ -333,22 +323,21 @@ class PeopleScraper(InterfaceBase):
 
         """
         logger.debug(f"getting roles tab for member number: {membership_number}")
+
+        if (cached := cache_hooks.get_val(key=("roles", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Roles")
         tree = html.fromstring(response)
-
         if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
             raise errors.CompassPermissionError(f"You do not have permission to the details of {membership_number}")
-
-        if statuses is None:
-            statuses = STATUSES
 
         primary_role = None
         roles_dates = []
         roles_data = {}
         for row in tree.xpath("//tbody/tr"):
             # Get children (cells in row)
-            cells = list(row)  # filter out empty elements
-
+            cells = list(row)
             # If current role allows selection of role for editing, remove tickbox
             # If any role allows for selection, an additional column will be added
             # with empty table-cells where there is no tickbox. Also remove these.
@@ -379,25 +368,24 @@ class PeopleScraper(InterfaceBase):
                 primary_role = role_details.role_number
             # Remove OHs etc from list
             if "helper" in role_details.role_class.lower() or role_details.role_title.lower() in NON_VOLUNTEER_TITLES:
-                if keep_non_volunteer_roles is False:
+                if only_volunteer_roles is True:
                     continue
             # If role is a full volunteer role, potentially add to date list
             elif role_status != "Cancelled":
                 # If role_end is a falsy value (None), replace with today's date
                 roles_dates.append((role_details.role_start, role_details.role_end or datetime.date.today()))
 
-            # Role status filter
-            if role_status not in statuses:
-                continue
-
             roles_data[role_details.role_number] = role_details
 
         with validation_errors_logging(membership_number):
             # Calculate days of membership (inclusive), normalise to years.
-            return schema.MemberRolesCollection(
-                roles=roles_data,
-                membership_duration=_membership_duration(roles_dates),
-                primary_role=primary_role,
+            return cache_hooks.set_val(
+                schema.MemberRolesCollection(
+                    roles=roles_data,
+                    membership_duration=_membership_duration(roles_dates),
+                    primary_role=primary_role,
+                ),
+                key=("roles", membership_number),
             )
 
     def get_permits_tab(self, membership_number: int) -> list[schema.MemberPermit]:
@@ -417,6 +405,9 @@ class PeopleScraper(InterfaceBase):
                 For errors while executing the HTTP call
 
         """
+        if (cached := cache_hooks.get_val(key=("permits", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Permits")
         tree = html.fromstring(response)
 
@@ -428,35 +419,24 @@ class PeopleScraper(InterfaceBase):
             for row in rows:
                 child_nodes = list(row)
                 expires = child_nodes[5].text_content()
-                permit = schema.MemberPermit(
-                    membership_number=membership_number,
-                    permit_type=child_nodes[1].text_content(),
-                    category=child_nodes[2].text_content(),
-                    type=child_nodes[3].text_content(),
-                    restrictions=child_nodes[4].text_content(),
-                    expires=parse(expires) if expires != "Revoked" else None,
-                    status=child_nodes[5].get("class"),
+                permits.append(
+                    schema.MemberPermit(
+                        membership_number=membership_number,
+                        permit_type=child_nodes[1].text_content(),
+                        category=child_nodes[2].text_content(),
+                        type=child_nodes[3].text_content(),
+                        restrictions=child_nodes[4].text_content(),
+                        expires=parse(expires) if expires != "Revoked" else None,
+                        status=child_nodes[5].get("class"),
+                    )
                 )
-                permits.append(permit)
+        return cache_hooks.set_val(permits, key=("permits", membership_number))
 
-            return permits
-
-    @overload
-    def get_training_tab(self, membership_number: int, ongoing_only: Literal[True]) -> schema.MemberMandatoryTraining:
-        ...
-
-    @overload
-    def get_training_tab(self, membership_number: int, ongoing_only: Literal[False]) -> schema.MemberTrainingTab:
-        ...
-
-    def get_training_tab(
-        self, membership_number: int, ongoing_only: bool = False
-    ) -> Union[schema.MemberTrainingTab, schema.MemberMandatoryTraining]:
+    def get_training_tab(self, membership_number: int) -> schema.MemberTrainingTab:
         """Returns data from Training tab for a given member.
 
         Args:
             membership_number: Membership Number to use
-            ongoing_only: Return a dataframe of role training & OGL info? Otherwise returns all data
 
         Returns:
             A model with the data from the training tab (keys will always be
@@ -496,6 +476,9 @@ class PeopleScraper(InterfaceBase):
         """
         logger.debug(f"getting training tab for member number: {membership_number}")
 
+        if (cached := cache_hooks.get_val(key=("training", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Training")
         tree = html.fromstring(response)
 
@@ -508,7 +491,7 @@ class PeopleScraper(InterfaceBase):
 
             # Personal Learning Plan (PLP) data
             if "trPLP" in classes:
-                plp_number, plp_data = _process_personal_learning_plan(row, ongoing_only)
+                plp_number, plp_data = _process_personal_learning_plan(row)
                 training_plps[plp_number] = plp_data
 
             # Role data
@@ -516,14 +499,9 @@ class PeopleScraper(InterfaceBase):
                 role_number, role_data = _process_role_data(row)
                 training_roles[role_number] = role_data
 
-        training_ogl = _compile_ongoing_learning(training_plps, tree)
-
-        if ongoing_only:
-            with validation_errors_logging(membership_number):
-                return schema.MemberMandatoryTraining.parse_obj(training_ogl)
-
+        details = {"roles": training_roles, "plps": training_plps, "mandatory": _compile_ongoing_learning(training_plps, tree)}
         with validation_errors_logging(membership_number):
-            return schema.MemberTrainingTab.parse_obj({"roles": training_roles, "plps": training_plps, "mandatory": training_ogl})
+            return cache_hooks.set_val(schema.MemberTrainingTab.parse_obj(details), key=("training", membership_number))
 
     def get_awards_tab(self, membership_number: int) -> list[schema.MemberAward]:
         """Returns data from Awards tab for a given member.
@@ -547,9 +525,11 @@ class PeopleScraper(InterfaceBase):
                 For errors while executing the HTTP call
 
         """
+        if (cached := cache_hooks.get_val(key=("awards", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Awards")
         tree = html.fromstring(response)
-
         if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
             raise errors.CompassPermissionError(f"You do not have permission to the details of {membership_number}")
 
@@ -558,14 +538,15 @@ class PeopleScraper(InterfaceBase):
         with validation_errors_logging(membership_number):
             for row in rows:
                 award_props = row[1][0]  # Properties are stored as yet another sub-table
-                award_data = schema.MemberAward(
-                    membership_number=membership_number,
-                    type=award_props[0][1].text_content(),
-                    location=award_props[1][1].text_content() or None,
-                    date=parse(award_props[2][1].text_content() or ""),  # type: ignore[arg-type]
+                awards.append(
+                    schema.MemberAward(
+                        membership_number=membership_number,
+                        type=award_props[0][1].text_content(),
+                        location=award_props[1][1].text_content() or None,
+                        date=parse(award_props[2][1].text_content() or ""),  # type: ignore[arg-type]
+                    )
                 )
-                awards.append(award_data)
-        return awards
+        return cache_hooks.set_val(awards, key=("awards", membership_number))
 
     def get_disclosures_tab(self, membership_number: int) -> list[schema.MemberDisclosure]:
         """Returns data from Disclosures tab for a given member.
@@ -594,9 +575,11 @@ class PeopleScraper(InterfaceBase):
                 For errors while executing the HTTP call
 
         """
+        if (cached := cache_hooks.get_val(key=("disclosures", membership_number))) is not None:
+            return cached
+
         response = self._get_member_profile_tab(membership_number, "Disclosures")
         tree = html.fromstring(response)
-
         if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=AccessCN":
             raise errors.CompassPermissionError(f"You do not have permission to the details of {membership_number}")
 
@@ -607,19 +590,20 @@ class PeopleScraper(InterfaceBase):
                 # Get children (cells in row)
                 cells = list(row)
 
-                disclosure = schema.MemberDisclosure(
-                    membership_number=membership_number,
-                    country=cells[0].text_content() or None,  # Country sometimes missing (Application Withdrawn)
-                    provider=cells[1].text_content(),
-                    type=cells[2].text_content(),
-                    number=cells[3].text_content() or None,  # If Application Withdrawn, no disclosure number
-                    issuer=cells[4].text_content() or None,
-                    issue_date=parse(cells[5].text_content()),  # If Application Withdrawn, maybe no issue date
-                    status=cells[6].text_content(),
-                    expiry_date=parse(cells[7].text_content()),  # If Application Withdrawn, no expiry date
+                disclosures.append(
+                    schema.MemberDisclosure(
+                        membership_number=membership_number,
+                        country=cells[0].text_content() or None,  # Country sometimes missing (Application Withdrawn)
+                        provider=cells[1].text_content(),
+                        type=cells[2].text_content(),
+                        number=cells[3].text_content() or None,  # If Application Withdrawn, no disclosure number
+                        issuer=cells[4].text_content() or None,
+                        issue_date=parse(cells[5].text_content()),  # If Application Withdrawn, maybe no issue date
+                        status=cells[6].text_content(),
+                        expiry_date=parse(cells[7].text_content()),  # If Application Withdrawn, no expiry date
+                    )
                 )
-                disclosures.append(disclosure)
-        return disclosures
+        return cache_hooks.set_val(disclosures, key=("disclosures", membership_number))
 
     # See getAppointment in PGS\Needle
     def get_roles_detail(self, role_number: int) -> schema.MemberRolePopup:
@@ -666,23 +650,20 @@ class PeopleScraper(InterfaceBase):
                 For errors while executing the HTTP call
 
         """
-        # start_time = time.time()
+        if (cached := cache_hooks.get_val(key=("role_detail", role_number))) is not None:
+            return cached
+
         response = self.s.get(f"{Settings.base_url}/Popups/Profile/AssignNewRole.aspx?VIEW={role_number}")
-        # logger.debug(f"Getting details for role number: {role_number}. Request in {(time.time() - start_time):.2f}s")
-        # post_response_time = time.time()
         tree = html.fromstring(response.content)
-
-        form: html.FormElement = tree.forms[0]
-        inputs: html.InputGetter = form.inputs
-        fields: html.FieldsDict = form.fields
-
-        if form.action == "./ScoutsPortal.aspx?Invalid=Access":
+        if tree.forms[0].action == "./ScoutsPortal.aspx?Invalid=Access":
             raise errors.CompassPermissionError(f"You do not have permission to the details of role {role_number}")
 
+        inputs: dict[str, Union[html.InputElement, html.SelectElement]] = dict(tree.forms[0].inputs)
+        fields: dict[str, Union[str]] = {k: v.value for k, v in inputs.items() if v.value is not None}
+
         line_manager_number, line_manager_name = _extract_line_manager(inputs["ctl00$workarea$cbo_p2_linemaneger"])
-        ce_check = fields.get("ctl00$workarea$txt_p2_cecheck")  # CE (Confidential Enquiry) Check
+        ce_check = fields.get("ctl00$workarea$txt_p2_cecheck", "")  # CE (Confidential Enquiry) Check
         disclosure_check, disclosure_date = _extract_disclosure_date(fields.get("ctl00$workarea$txt_p2_disclosure", ""))
-        ref_code = fields.get("ctl00$workarea$cbo_p2_referee_status")
 
         approval_values = {row[1][0].get("data-app_code"): row[1][0].get("data-db") for row in tree.xpath("//tr[@class='trProp']")}
         # row[1][0].get("title") gives title text, but this is not useful as it does not reflect latest changes,
@@ -692,38 +673,36 @@ class PeopleScraper(InterfaceBase):
             role_number=role_number,
             # `organisation_level` is ignored, no corresponding field in MemberTrainingRole:
             organisation_level=fields.get("ctl00$workarea$cbo_p1_level"),
-            birth_date=parse(inputs["ctl00$workarea$txt_p1_membername"].get("data-dob")) if Settings.debug else None,
-            membership_number=int(fields.get("ctl00$workarea$txt_p1_memberno")),
+            birth_date=parse(inputs["ctl00$workarea$txt_p1_membername"].get("data-dob")),
+            membership_number=int(fields.get("ctl00$workarea$txt_p1_memberno", 0)),
             # `name` is ignored, no corresponding field in MemberTrainingRole:
-            name=fields.get("ctl00$workarea$txt_p1_membername").split(" ", maxsplit=1)[1],
+            name=fields.get("ctl00$workarea$txt_p1_membername", " ").split(" ", 1)[1],
             role_title=fields.get("ctl00$workarea$txt_p1_alt_title"),
-            role_start=parse(fields.get("ctl00$workarea$txt_p1_startdate")),
+            role_start=parse(fields.get("ctl00$workarea$txt_p1_startdate", "")),
             role_status=fields.get("ctl00$workarea$txt_p2_status"),
             line_manager_number=line_manager_number,
             line_manager=line_manager_name,
-            review_date=parse(fields.get("ctl00$workarea$txt_p2_review")),
+            review_date=parse(fields.get("ctl00$workarea$txt_p2_review", "")),
             ce_check=parse(ce_check) if ce_check != "Pending" else None,  # TODO if CE check date != current date then is valid
             disclosure_check=disclosure_check,
             disclosure_date=disclosure_date,
-            references=references_codes.get(ref_code, ref_code),
+            references=references_codes.get(fields.get("ctl00$workarea$cbo_p2_referee_status", "")),
             appointment_panel_approval=approval_values.get("ROLPRP|AACA"),
             commissioner_approval=approval_values.get("ROLPRP|CAPR"),
             committee_approval=approval_values.get("ROLPRP|CCA"),
         )
 
-        # Filter null values
-        role_details = {k: v for k, v in role_details.items() if v is not None}
-
         logger.debug(f"Processed details for role number: {role_number}.")
         # TODO data-ng_id?, data-rtrn_id?
+
+        full_details = {
+            "hierarchy": dict(_process_hierarchy(inputs)),
+            "details": {k: v for k, v in role_details.items() if v is not None},  # Filter null values
+            "getting_started": _process_getting_started(tree.xpath("//tr[@class='trTrain trTrainData']")),
+        }
+
         with validation_errors_logging(role_number, name="Role Number"):
-            return schema.MemberRolePopup.parse_obj(
-                {
-                    "hierarchy": dict(_process_hierarchy(inputs)),
-                    "details": role_details,
-                    "getting_started": _process_getting_started(tree.xpath("//tr[@class='trTrain trTrainData']")),
-                }
-            )
+            return cache_hooks.set_val(schema.MemberRolePopup.parse_obj(full_details), key=("role_detail", role_number))
 
 
 class _AddressData(TypedDict):
@@ -752,17 +731,18 @@ def _extract_primary_role(role_title: str, primary_role: Union[int, None]) -> tu
     if primary_role is not None:
         return role_title, primary_role
     if role_title.endswith(" [Primary]"):
-        role_title = role_title.removesuffix(" [Primary]")
-        return role_title, True
+        return role_title.removesuffix(" [Primary]"), True
     return role_title, primary_role
 
 
 def _extract_review_date(review_status: str) -> tuple[schema.TYPES_ROLE_STATUS, Optional[datetime.date]]:
     if review_status.startswith("Full Review Due ") or review_status.startswith("Full Ending "):
-        role_status: schema.TYPES_ROLE_STATUS = "Full"
+        role_status: Literal["Full"] = "Full"
         review_date = parse(review_status.removeprefix("Full Review Due ").removeprefix("Full Ending "))
         return role_status, review_date
-    return cast(schema.TYPES_ROLE_STATUS, review_status), None
+    if review_status in ROLE_STATUSES:
+        return review_status, None  # type: ignore[return-value]  # str -> Literal type narrowing doesn't seem to work?
+    raise ValueError(f"Invalid value for review status '{review_status}'!")
 
 
 def _reduce_date_list(dl: Iterable[tuple[datetime.date, datetime.date]]) -> Iterator[tuple[datetime.date, datetime.date]]:
@@ -812,7 +792,7 @@ def _membership_duration(dates: Iterable[tuple[datetime.date, datetime.date]]) -
     if not dates:  # handle empty iterable
         return 0
     membership_duration_days = sum((end - start).days + 1 for start, end in _reduce_date_list(dates))
-    return membership_duration_days / 365.2425  # Leap year except thrice per 400 years.
+    return round(membership_duration_days / 365.2425, 3)  # Leap year except thrice per 400 years.
 
 
 def _compile_ongoing_learning(training_plps: TYPES_TRAINING_PLPS, tree: html.HtmlElement) -> TYPES_TRAINING_OGL:
@@ -843,19 +823,18 @@ def _compile_ongoing_learning(training_plps: TYPES_TRAINING_PLPS, tree: html.Htm
     # Get main OGL - safety, safeguarding, first aid
     for ongoing_learning in tree.xpath("//tr[@data-ng_code]"):
         cell_text = {c.get("id", "<None>").split("_")[0]: c.text_content() for c in ongoing_learning}
-
+        # TODO missing data-pk from list(cell)[0].tag == "input", and module names/codes. Are these important?
         training_ogl[mogl_modules[ongoing_learning.get("data-ng_code")]] = dict(
             completed_date=parse(cell_text.get("tdLastComplete", "")),
             renewal_date=parse(cell_text.get("tdRenewal", "")),
         )
-        # TODO missing data-pk from list(cell)[0].tag == "input", and module names/codes. Are these important?
 
     # Update training_ogl with missing mandatory ongoing learning types
-    blank_module = cast(TYPES_TRAINING_OGL_DATES, dict(completed_date=None, renewal_date=None))
+    blank_module: TYPES_TRAINING_OGL_DATES = dict(completed_date=None, renewal_date=None)
     return {mogl_type: training_ogl.get(mogl_type, blank_module) for mogl_type in mogl_modules.values()}
 
 
-def _process_personal_learning_plan(plp: html.HtmlElement, ongoing_only: bool) -> tuple[int, list[TYPES_TRAINING_MODULE]]:
+def _process_personal_learning_plan(plp: html.HtmlElement) -> tuple[int, list[TYPES_TRAINING_MODULE]]:
     """Parses a personal learning plan from a LXML row element containing data."""
     plp_data = []
     plp_table = plp.getchildren()[0].getchildren()[0]
@@ -869,13 +848,8 @@ def _process_personal_learning_plan(plp: html.HtmlElement, ongoing_only: bool) -
         module_data["module_id"] = int(child_nodes[0].get("id")[4:])
         matches = re.match(r"^([A-Z0-9]+) - (.+)$", child_nodes[0].text_content()).groups()  # type: ignore[union-attr]
         if matches:
-            code = str(matches[0])
-            module_data["code"] = code
+            module_data["code"] = str(matches[0])
             module_data["name"] = matches[1]
-
-            # Skip processing if we only want ongoing learning data and the module is not GDPR.
-            if ongoing_only and "gdpr" not in code.lower():
-                continue
 
         learning_required = child_nodes[1].text_content().lower()
         module_data["learning_required"] = "yes" in learning_required if learning_required else None
@@ -886,7 +860,7 @@ def _process_personal_learning_plan(plp: html.HtmlElement, ongoing_only: bool) -
         validated_by_string = child_nodes[4].text_content()
         if validated_by_string:
             # Add empty item to prevent IndexError
-            validated_by_data = validated_by_string.split(" ", maxsplit=1) + [""]
+            validated_by_data = validated_by_string.split(" ", 1) + [""]
             module_data["validated_membership_number"] = maybe_int(validated_by_data[0])
             module_data["validated_name"] = validated_by_data[1]
         module_data["validated_date"] = parse(child_nodes[5].text_content())
@@ -901,7 +875,6 @@ def _process_role_data(role: html.HtmlElement) -> tuple[int, dict[str, Union[Non
     child_nodes = list(role)
 
     role_data: dict[str, Union[None, str, int, datetime.date]] = dict()
-
     role_number = int(role.get("data-ng_mrn"))
     role_data["role_number"] = role_number
     role_data["role_title"] = child_nodes[0].text_content()
@@ -915,17 +888,14 @@ def _process_role_data(role: html.HtmlElement) -> tuple[int, dict[str, Union[Non
     else:
         role_data["role_status"] = status_with_review
         role_data["review_date"] = None
-
     role_data["location"] = child_nodes[3].text_content()
-
     training_advisor_string = child_nodes[4].text_content()
     if training_advisor_string:
         role_data["ta_data"] = training_advisor_string
         # Add empty item to prevent IndexError
-        training_advisor_data = training_advisor_string.split(" ", maxsplit=1) + [""]
+        training_advisor_data = training_advisor_string.split(" ", 1) + [""]
         role_data["ta_number"] = maybe_int(training_advisor_data[0])
         role_data["ta_name"] = training_advisor_data[1]
-
     completion_string = child_nodes[5].text_content()
     if completion_string:
         role_data["completion"] = completion_string
@@ -941,7 +911,6 @@ def _extract_line_manager(line_manager_list: html.SelectElement) -> tuple[Option
     line_manager_el = next((op for op in line_manager_list if op.get("selected")), None)
     if line_manager_el is None:
         return None, None
-
     number = maybe_int(line_manager_el.get("value"))
     name = line_manager_el.text.strip()
     if name in unset_vals:
@@ -956,17 +925,16 @@ def _extract_disclosure_date(disclosure_status: str) -> tuple[Optional[str], Opt
     return disclosure_status or None, None
 
 
-def _process_hierarchy(inputs: html.InputGetter) -> Iterator[tuple[str, str]]:
+def _process_hierarchy(inputs: dict[str, html.HtmlElement]) -> Iterator[tuple[str, str]]:
     """Get all levels of the org hierarchy and select those that will have information."""
     # Get all inputs with location data
-    for input_name, input_el in dict(inputs).items():
+    for input_name, input_el in inputs.items():
         if "ctl00$workarea$cbo_p1_location" not in input_name:
             continue
-        level_name = input_el.get("title")
+        level_name = input_el.get("title").lower()
         level_value = input_el[0].text
-        if level_value in unset_vals:
-            continue
-        yield renamed_levels.get(level_name, level_name).lower(), level_value
+        if level_value not in unset_vals:
+            yield "county" if level_name == "county / area / scottish region / overseas branch" else level_name, level_value
 
 
 def _process_getting_started(getting_started_modules: html.HtmlElement) -> dict[str, dict[str, Union[None, str, datetime.date]]]:
