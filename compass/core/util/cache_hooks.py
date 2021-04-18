@@ -1,77 +1,76 @@
 from __future__ import annotations
 
-import json
-import time
-from typing import Literal, TYPE_CHECKING, TypeVar
+import functools
+from typing import TYPE_CHECKING, TypedDict, TypeVar
 
-from pydantic.json import pydantic_encoder
+import pydantic
 
 from compass.core.settings import Settings
-from compass.core.util import context_managers
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Callable
+    from collections.abc import Hashable
 
     T = TypeVar("T", bound=object)
-
-_cache: dict[tuple[str, int], tuple[int, object]] = {}
-clear = _cache.clear  # clear cache function
+    C = Callable[..., T]
 
 
-class _Opt:  # avoid global scope
-    BACKEND_DISK: bool = False
-    EXPIRY_SECONDS: int = 60
-
-
-def set_val(value: T, /, *, filename: Path | None = None, key: tuple[str, int] | None = None) -> T:
-    if Settings.use_cache is True:
-        if _Opt.BACKEND_DISK:
-            if filename is None:
-                raise ValueError("Filename is None!")
-            with context_managers.filesystem_guard(f"Unable to write cache file to {filename}"):
-                filename.write_text(json.dumps(value, ensure_ascii=False, default=pydantic_encoder), encoding="utf-8")
-        else:
-            if key is None:
-                raise ValueError("Key is None!")
-            _cache[key] = time.monotonic_ns() // 10 ** 9, value
+def default_set(_key: tuple[str, int | Hashable], value: T, /) -> T:  # default no-op
     return value
 
 
-def get_val(*, filename: Path | None = None, key: tuple[str, int] | None = None) -> T | None:
-    if Settings.use_cache is False:
-        return None
-    if _Opt.BACKEND_DISK:
-        if filename is None:
-            raise ValueError("Filename is None!")
-        if not filename.is_file():  # catching errors is expensive, so check first
-            return None
-        try:
-            json_data: object = json.loads(filename.read_text(encoding="utf-8"))
-            if json_data and (_Opt.EXPIRY_SECONDS == 0 or time.time() - filename.stat().st_mtime < _Opt.EXPIRY_SECONDS):
-                return json_data  # type: ignore[return-value]
-        except FileNotFoundError:
-            pass
-    else:
-        if key is None:
-            raise ValueError("Key is None!")
-        pair = _cache.get(key)
-        if pair is None:
-            return None
-        time_stored, value = pair
-        if _Opt.EXPIRY_SECONDS == 0 or time.monotonic() - time_stored < _Opt.EXPIRY_SECONDS:
-            return value  # type: ignore[return-value]
-        del _cache[key]
+def default_get(_key: tuple[str, int | Hashable]) -> T | None:  # default no-op
     return None
 
 
-def setup_cache(backend: Literal["memory", "disk"], expiry: int = 0) -> None:
+class _OptClass(TypedDict):  # avoid global scope
+    disable_cache: bool
+    set_cache: Callable[[tuple[str, int | Hashable], T], T]
+    get_cache: Callable[[tuple[str, int | Hashable]], T | None]
+
+
+_Opt: _OptClass = {"disable_cache": True, "set_cache": default_set, "get_cache": default_get}
+
+
+def setup_cache_hooks(
+    set_cache: Callable[[tuple[str, int | Hashable], T], T],
+    get_cache: Callable[[tuple[str, int | Hashable]], T | None],
+    disable_cache: bool = False,
+) -> None:
     """Turn on caching and set options.
 
     Args:
-        backend: Cache to disk or in-memory
-        expiry: Cache expiry in minutes. 0 to disable time-based expiry
+        set_cache: Function to set value to given key
+        get_cache: Function to retrieve value from a given key
+        disable_cache: Local disable of cache, for usage by backends
 
     """
     Settings.use_cache = True
-    _Opt.BACKEND_DISK = backend == "disk"
-    _Opt.EXPIRY_SECONDS = expiry * 60
+    _Opt["disable_cache"] = disable_cache
+    _Opt["set_cache"] = set_cache
+    _Opt["get_cache"] = get_cache
+
+
+def cache_result(*, key: tuple[str, int], model_type: type | None = None) -> Callable[[C[T]], C[T]]:
+    def decorating_function(user_function: C[T]) -> C[T]:
+        return _cache_wrapper(user_function, key, model_type)
+
+    return decorating_function
+
+
+def _cache_wrapper(user_function: C[T], key: tuple[str, int], model_type: type | None = None) -> C[T]:
+    if Settings.use_cache is False or _Opt["disable_cache"] == 0:  # No caching
+        return user_function
+
+    def wrapper(*args: Hashable, **kwargs: Hashable) -> T:
+        key_ = key[0], (*args, *kwargs)[key[1]]  # second tuple item is position of key_id in function args
+        result = _Opt["get_cache"](key_)  # pylint: disable=assignment-from-none  # default returns None, backends can override
+        if result is not None:
+            if model_type is not None:
+                return pydantic.parse_obj_as(model_type, result)
+            return result
+        result = user_function(*args, **kwargs)
+        _Opt["set_cache"](key_, result)
+        return result
+
+    return functools.update_wrapper(wrapper, user_function)
