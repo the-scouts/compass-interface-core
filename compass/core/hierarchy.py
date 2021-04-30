@@ -13,6 +13,8 @@ from compass.core.util import cache_hooks
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from compass.core.util import client
+
 
 class HierarchyState(TypedDict, total=False):
     compass: int
@@ -60,7 +62,7 @@ class UnitSections(enum.IntEnum):
 class Hierarchy:
     def __init__(self, session: Logon):
         """Constructor for Hierarchy."""
-        self._scraper: scraper.HierarchyScraper = scraper.HierarchyScraper(session._session)
+        self.client: client.Client = session._client
         self.session: Logon = session
 
     def get_unit_level(
@@ -87,7 +89,7 @@ class Hierarchy:
                 HierarchyLevel(id=..., level="...")
 
         Raises:
-            ValueError:
+            CompassError:
                 When no unit data information has been provided
 
         """
@@ -124,7 +126,7 @@ class Hierarchy:
             3. default data
 
         Raises:
-            ValueError:
+            CompassError:
                 When no unit data information has been provided
 
         """
@@ -157,7 +159,7 @@ class Hierarchy:
 
         child_level = Levels(level_numeric + 1) if descendants else None
         if descendants:
-            children = self._scraper.get_units_from_hierarchy(unit_id, UnitChildren(level_numeric).name)  # type: ignore[arg-type]
+            children = scraper.get_units_from_hierarchy(self.client, unit_id, UnitChildren(level_numeric).name)  # type: ignore[arg-type]
             children_updated = []
             for child in children:
                 if not child:
@@ -166,7 +168,7 @@ class Hierarchy:
                 children_updated.append(child.dict() | grandchildren)
             descendant_data["child"] = children_updated
         section_level: scraper.TYPES_ENDPOINT_LEVELS = UnitSections(level_numeric).name  # type: ignore[assignment]
-        descendant_data["sections"] = self._scraper.get_units_from_hierarchy(unit_id, section_level)
+        descendant_data["sections"] = scraper.get_units_from_hierarchy(self.client, unit_id, section_level)
 
         return descendant_data
 
@@ -191,7 +193,7 @@ class Hierarchy:
             A set of unique member numbers within the given unit.
 
         Raises:
-            ValueError:
+            CompassError:
                 When no unit data information has been provided
 
         """
@@ -218,7 +220,9 @@ class Hierarchy:
         all_members = []
         for unit_id in set(compass_ids):
             logger.debug(f"Getting members for {unit_id}")
-            data = schema.HierarchyUnitMembers(unit_id=unit_id, members=self._scraper.get_members_with_roles_in_unit(unit_id))
+            data = schema.HierarchyUnitMembers(
+                unit_id=unit_id, members=scraper.get_members_with_roles_in_unit(self.client, unit_id)
+            )
             all_members.append(data)
         return all_members
 

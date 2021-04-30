@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 
-from compass.core._scrapers import member as scraper
+from compass.core._scrapers import member_profile
+from compass.core._scrapers import role_detail
 
 if TYPE_CHECKING:
     from compass.core.logon import Logon
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 class People:
     def __init__(self, session: Logon):
         """Constructor for People."""
-        self._scraper = scraper.PeopleScraper(session._session)
+        self.client = session._client
         self.membership_number = session.membership_number
 
     def personal(self, membership_number: int) -> schema.MemberDetails:
@@ -28,14 +29,14 @@ class People:
             A MemberDetails object containing all data.
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view personal
                 data for the requested member.
 
         """
-        return self._scraper.get_personal_tab(membership_number)
+        return member_profile.get_personal_tab(self.client, membership_number)
 
     # See getRole in PGS\Needle
     def roles(
@@ -61,14 +62,14 @@ class People:
             A MemberRolesDict object containing all data.
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view roles
                 data for the requested member.
 
         """
-        roles_data = self._scraper.get_roles_tab(membership_number, only_volunteer_roles)
+        roles_data = member_profile.get_roles_tab(self.client, membership_number, only_volunteer_roles)
         if only_active is False:
             return roles_data
         # Role status filter
@@ -94,13 +95,13 @@ class People:
             MemberRolePopup object with detail on the role
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view role data
 
         """
-        return self._scraper.get_roles_detail(role_number)
+        return role_detail.get_roles_detail(self.client, role_number)
 
     def permits(self, membership_number: int) -> list[schema.MemberPermit]:
         """Gets permits tab data for a given member.
@@ -109,12 +110,12 @@ class People:
             membership_number: Membership Number to use
 
         Returns:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
             A MemberPermitsList object containing all data.
 
         """
-        return self._scraper.get_permits_tab(membership_number)
+        return member_profile.get_permits_tab(self.client, membership_number)
 
     def training(self, membership_number: int) -> schema.MemberTrainingTab:
         """Gets training tab data for a given member.
@@ -123,12 +124,12 @@ class People:
             membership_number: Membership Number to use
 
         Returns:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
             A MemberTrainingTab object containing all data.
 
         """
-        return self._scraper.get_training_tab(membership_number)
+        return member_profile.get_training_tab(self.client, membership_number)
 
     def awards(self, membership_number: int) -> list[schema.MemberAward]:
         """Gets awards tab data for a given member.
@@ -140,14 +141,14 @@ class People:
             A MemberAward object containing all data.
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view awards
                 data for the requested member.
 
         """
-        return self._scraper.get_awards_tab(membership_number)
+        return member_profile.get_awards_tab(self.client, membership_number)
 
     def disclosures(self, membership_number: int) -> list[schema.MemberDisclosure]:
         """Gets disclosures tab data for a given member.
@@ -159,14 +160,14 @@ class People:
             A list of MemberDisclosure objects containing all data.
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view
                 disclosure data for the requested member.
 
         """
-        return self._scraper.get_disclosures_tab(membership_number)
+        return member_profile.get_disclosures_tab(self.client, membership_number)
 
     # Convenience methods:
 
@@ -184,14 +185,14 @@ class People:
             Length of service in fractional years
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view roles
                 data for the requested member.
 
         """
-        return self._scraper.get_roles_tab(membership_number).membership_duration
+        return member_profile.get_roles_tab(self.client, membership_number).membership_duration
 
     def ongoing_learning(self, membership_number: int) -> schema.MemberMandatoryTraining:
         """Gets ongoing learning data for a given member.
@@ -200,12 +201,12 @@ class People:
             membership_number: Membership Number to use
 
         Returns:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
             A MemberMOGLList object containing all data.
 
         """
-        return self._scraper.get_training_tab(membership_number).mandatory
+        return member_profile.get_training_tab(self.client, membership_number).mandatory
 
     def latest_disclosure(self, membership_number: int) -> Optional[schema.MemberDisclosure]:
         """Gets latest disclosure for a given member.
@@ -219,9 +220,9 @@ class People:
             A MemberDisclosure objects containing disclosure data.
 
         Raises:
-            requests.exceptions.RequestException:
+            CompassNetworkError:
                 For errors while executing the HTTP call
-            PermissionError:
+            CompassPermissionError:
                 If the current user does not have permission to view
                 disclosure data for the requested member.
 

@@ -30,38 +30,25 @@ TYPES_ETHNICITY = Literal[
     "18.Other",
     "19.Prefer not to say",
 ]
-TYPES_RELIGION = Union[  # type: ignore[misc]
-    Literal[
-        "Buddhist",
-        "Christian (including all Christian denominations)",
-        "Hindu",
-        "Jewish",
-        "Muslim",
-        "Any other religion (please specify)",
-        "No religion",
-        "Prefer not to say",
-    ],
-    pydantic.constr(regex=r"^Christian.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Any other religion.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^No religion.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+TYPES_RELIGION = Literal[
+    "Buddhist",
+    "Christian (including all Christian denominations)",
+    "Hindu",
+    "Jewish",
+    "Muslim",
+    "Sikh",
+    "Any other religion (please specify)",
+    "No religion",
+    "Prefer not to say",
 ]
-TYPES_OCCUPATION = Union[  # type: ignore[misc]
-    Literal[
-        "Employed",
-        "Unemployed",
-        "Retired (whether receiving a pension or not)",
-        "Student",
-        "Long term sick or disabled",
-        "Looking after home of family",
-        "Other",
-    ],
-    pydantic.constr(regex=r"^Employed.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Unemployed.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Retired.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Student.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Long term sick or disabled.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Looking after home of family.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
-    pydantic.constr(regex=r"^Other.*"),  # NoQA: F722 (https://stackoverflow.com/a/64917499)
+TYPES_OCCUPATION = Literal[
+    "Employed",
+    "Unemployed",
+    "Retired (whether receiving a pension or not)",
+    "Student",
+    "Long term sick or disabled",
+    "Looking after home of family",
+    "Other",
 ]
 TYPES_ROLE_CLASS = Literal[
     "Administrator",
@@ -267,8 +254,10 @@ class MemberDetails(MemberBase):
     sex: Optional[TYPES_SEX] = None
     nationality: Optional[str] = None  # literal? Big list...!
     ethnicity: Optional[TYPES_ETHNICITY] = None
-    religion: Optional[TYPES_RELIGION] = None  # type: ignore[valid-type]
-    occupation: Optional[TYPES_OCCUPATION] = None  # type: ignore[valid-type]
+    religion: Optional[TYPES_RELIGION] = None
+    religion_detail: Optional[str] = None
+    occupation: Optional[TYPES_OCCUPATION] = None
+    occupation_detail: Optional[str] = None
     join_date: Optional[datetime.date] = None
 
     # Contact Details
@@ -286,20 +275,20 @@ class MemberDetails(MemberBase):
     @pydantic.validator("main_phone")
     def check_phone_number(cls, v: Optional[str], values: dict[str, object]) -> Optional[str]:
         if v is None or not v or v == "0" or len(v) < 2:
-            return None
+            return None  # checks for v in (None, "", "0", .{1,2})
 
         try:
             n = phonenumbers.parse(v, "GB")
-        except phonenumbers.NumberParseException as err:
-            membership_number = values["membership_number"]
-            raise ValueError(f"Member No {membership_number}: phone number {v} is not valid!") from err  # must be a ValueError
+            if phonenumbers.is_valid_number(n):
+                if n.country_code == 44:
+                    return f"{phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.NATIONAL)}"
+                return f"{phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)}"
+        except phonenumbers.NumberParseException:
+            pass
 
-        if not phonenumbers.is_valid_number(n):
-            membership_number = values["membership_number"]
-            warnings.warn(f"Member No {membership_number}: phone number {v} is not valid!", RuntimeWarning)
-
-        fmt = phonenumbers.PhoneNumberFormat.NATIONAL if n.country_code == 44 else phonenumbers.PhoneNumberFormat.INTERNATIONAL
-        return str(phonenumbers.format_number(n, fmt))
+        membership_number = values["membership_number"]
+        warnings.warn(f"Member No {membership_number}: phone number {v} is not valid!", RuntimeWarning)
+        return None  # mypy being silly
 
 
 # Roles Tab (Main List - item)
@@ -323,7 +312,7 @@ class MemberRoleCore(MemberBase, MemberRoleBase):
 class MemberRolesCollection(pydantic.BaseModel):
     roles: dict[int, MemberRoleCore]
     membership_duration: float  # Membership duration in qualifying roles, in years
-    primary_role: Union[int, None]  # Primary role number. None if no primary role found
+    primary_role: Optional[int]  # Primary role number. None if no primary role found
 
 
 # Roles Tab (Role Detail Popup - Main)
