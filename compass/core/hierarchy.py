@@ -16,23 +16,18 @@ if TYPE_CHECKING:
     from compass.core.util.client import Client
 
     class HierarchyState(TypedDict, total=False):
-        compass: int
+        unit_id: int
         name: Optional[str]
-        Organisation_ID: int
-        Organisation_name: Optional[str]
-        Country_ID: int
-        Country_name: Optional[str]
-        Region_ID: int
-        Region_name: Optional[str]
-        County_ID: int
-        County_name: Optional[str]
-        District_ID: int
-        District_name: Optional[str]
-        Group_ID: int
-        Group_name: Optional[str]
+        # organisation: int  # Always 10000001; mildly redundant
+        country: int
+        region: int
+        county: int
+        district: int
+        group: int
 
 
-TYPE_LEVEL_META = tuple[Union[str, None], Union[scraper.TYPES_ENDPOINT_LEVELS, None], scraper.TYPES_ENDPOINT_LEVELS]
+TYPES_NULLABLE_UNIT_LEVEL = Union[schema.TYPES_UNIT_LEVELS, None]
+TYPE_LEVEL_META = tuple[TYPES_NULLABLE_UNIT_LEVEL, scraper.TYPES_ENDPOINT_LEVELS, scraper.TYPES_ENDPOINT_LEVELS]
 
 
 class Levels(TYPE_LEVEL_META, enum.Enum):
@@ -118,7 +113,7 @@ class Hierarchy:
         flat_hierarchy = flatten_hierarchy(hierarchy_dict)
 
         # generator for compass unit IDs
-        compass_ids = (unit["compass"] for unit in flat_hierarchy)
+        compass_ids = (unit["unit_id"] for unit in flat_hierarchy)
 
         # get members from the list of IDs
         seen: set[int] = set()  # Unit ID deduplication
@@ -178,13 +173,13 @@ def _get_unit_level(
 
 def _get_descendants_level(client: Client, unit_meta: schema.HierarchyLevel, recurse_children: bool) -> dict[str, object]:
     try:
-        level_numeric = Levels[unit_meta.level]
+        level = Levels[unit_meta.level]
     except KeyError:
         valid_levels = [level.name for level in Levels]
         raise errors.CompassError(f"Passed level: {unit_meta.level} is illegal. Valid values are {valid_levels}") from None
     if recurse_children:
-        return _get_descendants_recursive(client, unit_meta.unit_id, level_numeric)
-    return _get_descendants_immediate(client, unit_meta.unit_id, level_numeric)
+        return _get_descendants_recursive(client, unit_meta.unit_id, level)
+    return _get_descendants_immediate(client, unit_meta.unit_id, level)
 
 
 # See recurseRetrieve in PGS\Needle
@@ -241,12 +236,10 @@ def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[HierarchyStat
 
 def _flatten(d: Union[schema.UnitData, schema.DescendantData], hierarchy_state: HierarchyState) -> Iterator[HierarchyState]:
     """Generator expresion to recursively flatten hierarchy."""
-    level_name = d.level
     unit_id = d.unit_id
-    name = d.name
-    level_data = hierarchy_state | {f"{level_name}_ID": unit_id, f"{level_name}_name": name}  # type: ignore[operator]
-    yield {"compass": unit_id, "name": name, "section": False} | level_data
+    level_data = hierarchy_state | {d.level.lower(): unit_id}  # type: ignore[operator]
+    yield {"unit_id": unit_id, "name": d.name, "section": False} | level_data
     for child in d.child or []:
         yield from _flatten(child, level_data)
     for section in d.sections:
-        yield {"compass": section.unit_id, "name": section.name, "section": True} | level_data
+        yield {"unit_id": section.unit_id, "name": section.name, "section": True} | level_data
