@@ -31,6 +31,13 @@ TYPE_LEVEL_META = tuple[TYPES_NULLABLE_UNIT_LEVEL, scraper.TYPES_ENDPOINT_LEVELS
 
 
 class Levels(TYPE_LEVEL_META, enum.Enum):
+    """Holds unit level metadata.
+
+    Keys are from `schema.TYPES_UNIT_LEVELS`
+    Values are a three-tuple of child level, unit level endpoint, and unit
+    level section endpoint.
+    """
+
     Group = None, None, "group_sections"
     District = "Group", "groups", "district_sections"
     County = "District", "districts", "county_sections"
@@ -50,7 +57,7 @@ class Hierarchy:
     def unit_data(
         self,
         unit_id: Optional[int] = None,
-        level: Optional[schema.TYPES_UNIT_LEVELS] = None,
+        level: Optional[schema.TYPES_HIERARCHY_LEVELS] = None,
         use_default: bool = False,
         recurse_children: bool = True,
     ) -> schema.UnitData:
@@ -81,14 +88,14 @@ class Hierarchy:
         elif unit_id is not None and level is not None:
             unit_meta = schema.HierarchyLevel(unit_id=unit_id, level=level)
         else:
-            raise errors.CompassError("No level data specified! Either `use_default` or `unit_id` and `level` must be set!")
+            raise errors.CompassError("No level data specified! Either `use_default` or both `unit_id` and `level` must be set!")
         # Fetch the hierarchy
         return schema.UnitData.parse_obj(_get_descendants_level(self.client, unit_meta, recurse_children))
 
     def unique_members(
         self,
         unit_id: Optional[int] = None,
-        level: Optional[schema.TYPES_UNIT_LEVELS] = None,
+        level: Optional[schema.TYPES_HIERARCHY_LEVELS] = None,
         use_default: bool = False,
         recurse_children: bool = True,
     ) -> set[int]:
@@ -143,6 +150,9 @@ class Hierarchy:
 
 
 def _get_descendants_level(client: Client, unit_meta: schema.HierarchyLevel, recurse_children: bool) -> dict[str, object]:
+    # short-circuit if level type is a section hierarchy type
+    if unit_meta.level not in Levels.__members__:
+        return {"unit_id": unit_meta.unit_id, "level": unit_meta.level, "child": [], "sections": []}
     try:
         level = Levels[unit_meta.level]
     except KeyError:
