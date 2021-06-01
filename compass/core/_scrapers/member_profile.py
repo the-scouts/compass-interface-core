@@ -327,8 +327,7 @@ def get_roles_tab(
     """
     logger.debug(f"getting roles tab for member number: {membership_number}")
 
-    tree = _get_member_profile_tab(client, membership_number, "Roles")
-    rows = tree.xpath("//tbody/tr")
+    rows = _get_member_profile_tab(client, membership_number, "Roles").xpath("//tbody/tr")
 
     primary_role = None
     roles_dates = []
@@ -342,14 +341,22 @@ def get_roles_tab(
         if any(el.tag == "input" for el in cells[0]) or cells[0].getchildren() == []:
             cells.pop(0)
 
+        role_class = cells[1].text_content().strip()
+        # sanitise primary roles and note primary role status
         role_title, primary_role = _extract_primary_role(cells[0].text_content().strip(), primary_role)
+        # Skip OHs etc as early as possible
+        non_volunteer = "helper" in role_class.lower() or role_title.lower() in NON_VOLUNTEER_TITLES
+        if only_volunteer_roles and non_volunteer:
+            continue
+
+        # process role status & review date string
         role_status, review_date = _extract_review_date(cells[5].text_content().strip())
 
         role_details = schema.MemberRoleCore(
             role_number=int(row.get("data-pk")),
             membership_number=membership_number,
             role_title=role_title,
-            role_class=cells[1].text_content().strip(),
+            role_class=role_class,
             # role_type only visible if access to System Admin tab
             role_type=cells[0][0].get("title", None),
             # location_id only visible if role is in hierarchy AND location still exists
@@ -364,12 +371,8 @@ def get_roles_tab(
         # Save role number if role is primary
         if primary_role is True:
             primary_role = role_details.role_number
-        # Remove OHs etc from list
-        if "helper" in role_details.role_class.lower() or role_details.role_title.lower() in NON_VOLUNTEER_TITLES:
-            if only_volunteer_roles is True:
-                continue
         # If role is a full volunteer role, potentially add to date list
-        elif role_status != "Cancelled":
+        if role_status != "Cancelled" and not non_volunteer:
             # If role_end is a falsy value (None), replace with today's date
             roles_dates.append((role_details.role_start, role_details.role_end or datetime.date.today()))
 
