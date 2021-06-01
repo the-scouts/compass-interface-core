@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import enum
 from typing import Iterable, Optional, TYPE_CHECKING, TypedDict, Union
 
-from compass.core import errors
+import compass.core as ci
 from compass.core._scrapers import hierarchy as scraper
 from compass.core.logger import logger
 from compass.core.schemas import hierarchy as schema
@@ -12,10 +11,9 @@ from compass.core.util import cache_hooks
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from compass.core.logon import Logon
     from compass.core.util.client import Client
 
-    class HierarchyState(TypedDict, total=False):
+    class _HierarchyState(TypedDict, total=False):
         unit_id: int
         name: Optional[str]
         # organisation: int  # Always 10000001; mildly redundant
@@ -25,42 +23,39 @@ if TYPE_CHECKING:
         district: int
         group: int
 
-
-TYPES_NULLABLE_UNIT_LEVEL = Union[schema.TYPES_UNIT_LEVELS, None]
-TYPE_LEVEL_META = tuple[TYPES_NULLABLE_UNIT_LEVEL, scraper.TYPES_ENDPOINT_LEVELS, scraper.TYPES_ENDPOINT_LEVELS]
+    _TYPES_LEVEL = tuple[Optional[ci.TYPES_UNIT_LEVELS], Optional[scraper.TYPES_ENDPOINT_LEVELS], scraper.TYPES_ENDPOINT_LEVELS]
 
 
-class Levels(TYPE_LEVEL_META, enum.Enum):
-    """Holds unit level metadata.
-
-    Keys are from `schema.TYPES_UNIT_LEVELS`
-    Values are a three-tuple of child level, unit level endpoint, and unit
-    level section endpoint.
-    """
-
-    Group = None, None, "group_sections"
-    District = "Group", "groups", "district_sections"
-    County = "District", "districts", "county_sections"
-    Region = "County", "counties", "region_sections"
-    Country = "Region", "regions", "country_sections"
-    Organisation = "Country", "countries", "hq_sections"
+# Holds unit level metadata. Keys are from `schema.TYPES_UNIT_LEVELS`, values
+# are a three-tuple of child level, unit level endpoint, and unit  level
+# section endpoint.
+# Suppress PyCharm inspection (not great at literals)
+# noinspection PyTypeChecker
+_levels: dict[ci.TYPES_UNIT_LEVELS, _TYPES_LEVEL] = {
+    # "Group": (None, None, "group_sections"),
+    "District": ("Group", "groups", "district_sections"),
+    "County": ("District", "districts", "county_sections"),
+    "Region": ("County", "counties", "region_sections"),
+    "Country": ("Region", "regions", "country_sections"),
+    "Organisation": ("Country", "countries", "hq_sections"),
+}
 
 
 class Hierarchy:
-    def __init__(self, session: Logon):
+    def __init__(self, session: ci.Logon):
         """Constructor for Hierarchy."""
         self.client: Client = session._client
-        self.default_hierarchy: schema.HierarchyLevel = session.hierarchy
+        self.default_hierarchy: ci.HierarchyLevel = session.hierarchy
 
     # See recurseRetrieve in PGS\Needle
     @cache_hooks.cache_result(key=("hierarchy", 1), model_type=schema.UnitData)
     def unit_data(
         self,
         unit_id: Optional[int] = None,
-        level: Optional[schema.TYPES_HIERARCHY_LEVELS] = None,
+        level: Optional[ci.TYPES_HIERARCHY_LEVELS] = None,
         use_default: bool = False,
         recurse_children: bool = True,
-    ) -> schema.UnitData:
+    ) -> ci.UnitData:
         """Gets all units at given level and below, including sections.
 
         Unit data can be specified as a pre-constructed model, by passing literals, or
@@ -86,16 +81,16 @@ class Hierarchy:
         if use_default:
             unit_meta = self.default_hierarchy
         elif unit_id is not None and level is not None:
-            unit_meta = schema.HierarchyLevel(unit_id=unit_id, level=level)
+            unit_meta = ci.HierarchyLevel(unit_id=unit_id, level=level)
         else:
-            raise errors.CompassError("No level data specified! Either `use_default` or both `unit_id` and `level` must be set!")
+            raise ci.CompassError("No level data specified! Either `use_default` or both `unit_id` and `level` must be set!")
         # Fetch the hierarchy
-        return schema.UnitData.parse_obj(_get_descendants_level(self.client, unit_meta, recurse_children))
+        return ci.UnitData.parse_obj(_get_descendants_level(self.client, unit_meta, recurse_children))
 
     def unique_members(
         self,
         unit_id: Optional[int] = None,
-        level: Optional[schema.TYPES_HIERARCHY_LEVELS] = None,
+        level: Optional[ci.TYPES_HIERARCHY_LEVELS] = None,
         use_default: bool = False,
         recurse_children: bool = True,
     ) -> set[int]:
@@ -122,7 +117,7 @@ class Hierarchy:
         hierarchy_dict = self.unit_data(unit_id, level, use_default, recurse_children)
 
         # flatten tree
-        flat_hierarchy = flatten_hierarchy(hierarchy_dict)
+        flat_hierarchy = _flatten_hierarchy(hierarchy_dict)
 
         # generator for compass unit IDs
         compass_ids = (unit["unit_id"] for unit in flat_hierarchy)
@@ -135,46 +130,40 @@ class Hierarchy:
         # return a set of membership numbers
         return {members.contact_number for unit_member_list in unit_member_lists for members in unit_member_list}
 
-    def units_members(self, unit_ids: Iterable[int]) -> Iterator[schema.HierarchyUnitMembers]:
+    def units_members(self, unit_ids: Iterable[int]) -> Iterator[ci.HierarchyUnitMembers]:
         """Fetch all members from an iterable of unit IDs."""
         seen = set()  # Unit ID cache
         for unit_id in unit_ids:
             if unit_id in seen:
                 continue
             seen.add(unit_id)  # store already fetched unit IDs
-            yield schema.HierarchyUnitMembers(unit_id=unit_id, members=self.unit_members(unit_id))
+            yield ci.HierarchyUnitMembers(unit_id=unit_id, members=self.unit_members(unit_id))
 
-    def unit_members(self, unit_id: int) -> list[schema.HierarchyMember]:
+    def unit_members(self, unit_id: int) -> list[ci.HierarchyMember]:
         logger.debug(f"Getting members for {unit_id}")
         return scraper.get_members_with_roles_in_unit(self.client, unit_id)
 
 
-def _get_descendants_level(client: Client, unit_meta: schema.HierarchyLevel, recurse_children: bool) -> dict[str, object]:
+def _get_descendants_level(client: Client, unit_meta: ci.HierarchyLevel, recurse_children: bool) -> dict[str, object]:
     # short-circuit if level type is a section hierarchy type
-    if unit_meta.level not in Levels.__members__:
+    if unit_meta.level not in _levels:
         return {"unit_id": unit_meta.unit_id, "level": unit_meta.level, "child": [], "sections": []}
-    try:
-        level = Levels[unit_meta.level]
-    except KeyError:
-        valid_levels = [level.name for level in Levels]
-        raise errors.CompassError(f"Passed level: {unit_meta.level} is illegal. Valid values are {valid_levels}") from None
     if recurse_children:
-        return _get_descendants_recursive(client, unit_meta.unit_id, level)
-    return _get_descendants_immediate(client, unit_meta.unit_id, level)
+        return _get_descendants_recursive(client, unit_meta.unit_id, unit_meta.level)  # type: ignore[arg-type]
+    return _get_descendants_immediate(client, unit_meta.unit_id, unit_meta.level)  # type: ignore[arg-type]
 
 
 # See recurseRetrieve in PGS\Needle
-def _get_descendants_recursive(client: Client, unit_id: int, level: Levels, /) -> dict[str, object]:
+def _get_descendants_recursive(client: Client, unit_id: int, level_name: ci.TYPES_UNIT_LEVELS, /) -> dict[str, object]:
     """Recursively get all children from given unit ID and level."""
     logger.debug(f"getting data for unit {unit_id}")
 
     # All to handle as Group doesn't have grand-children
-    unit_data = {"unit_id": unit_id, "level": level.name}
+    unit_data: dict[str, object] = {"unit_id": unit_id, "level": level_name}
 
     # Do child units exist? (i.e. is this level != group)
-    child_level_name, endpoint_children, endpoint_sections = level
-    if endpoint_children and child_level_name:
-        child_level = Levels[child_level_name]  # initialise outside of loop
+    child_level, endpoint_children, endpoint_sections = _levels[level_name]
+    if endpoint_children and child_level:
         children = scraper.get_units_from_hierarchy(client, unit_id, endpoint_children)
         # extend children with grandchildren
         unit_data["child"] = [child.__dict__ | _get_descendants_recursive(client, child.unit_id, child_level) for child in children]
@@ -183,15 +172,15 @@ def _get_descendants_recursive(client: Client, unit_id: int, level: Levels, /) -
     return unit_data
 
 
-def _get_descendants_immediate(client: Client, unit_id: int, level: Levels, /) -> dict[str, object]:
+def _get_descendants_immediate(client: Client, unit_id: int, level_name: ci.TYPES_UNIT_LEVELS, /) -> dict[str, object]:
     """Recursively get all children from given unit ID and level."""
     logger.debug(f"getting data for unit {unit_id}")
 
     # All to handle as Group doesn't have grand-children
-    unit_data = {"unit_id": unit_id, "level": level.name}
+    unit_data: dict[str, object] = {"unit_id": unit_id, "level": level_name}
 
     # Do child units exist? (i.e. is this level != group)
-    child_level_name, endpoint_children, endpoint_sections = level
+    child_level_name, endpoint_children, endpoint_sections = _levels[level_name]
     if endpoint_children:
         blank_descendant_data: dict[str, object] = {"level": child_level_name, "child": None, "sections": []}
         children = scraper.get_units_from_hierarchy(client, unit_id, endpoint_children)
@@ -200,22 +189,22 @@ def _get_descendants_immediate(client: Client, unit_id: int, level: Levels, /) -
     return unit_data
 
 
-def flatten_hierarchy(hierarchy_dict: schema.UnitData) -> Iterator[HierarchyState]:  # noqa: D417 (hanging indent)
+def _flatten_hierarchy(hierarchy_dict: ci.UnitData) -> Iterator[_HierarchyState]:  # noqa: D417 (hanging indent)
     """Flattens a hierarchy tree / graph to a flat sequence of mappings.
 
     Args:
         hierarchy_dict:
-            The current object to be flattened. The user will pass in a `schema.UnitData`
-            object, whilst all recursion will be on `schema.DescendantData` objects.
+            The current object to be flattened. The user will pass in a `ci.UnitData`
+            object, whilst all recursion will be on `ci.DescendantData` objects.
 
     """
     # This args style is allowed, but not yet (2021-03-20) implemented in PyDocStyle, so D417 disabled above.
     # https://github.com/PyCQA/pydocstyle/issues/449
-    blank_state: HierarchyState = {}
+    blank_state: _HierarchyState = {}
     return _flatten(hierarchy_dict, blank_state)
 
 
-def _flatten(d: Union[schema.UnitData, schema.DescendantData], hierarchy_state: HierarchyState) -> Iterator[HierarchyState]:
+def _flatten(d: Union[ci.UnitData, ci.DescendantData], hierarchy_state: _HierarchyState) -> Iterator[_HierarchyState]:
     """Generator expresion to recursively flatten hierarchy."""
     unit_id = d.unit_id
     level_data = hierarchy_state | {d.level.lower(): unit_id}  # type: ignore[operator]

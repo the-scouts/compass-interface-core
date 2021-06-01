@@ -1,11 +1,9 @@
 import datetime
-import enum
 from typing import Literal
 
-from compass.core import errors
+import compass.core as ci
 from compass.core._scrapers import reports as scraper
 from compass.core.logger import logger
-from compass.core.logon import Logon
 from compass.core.settings import Settings
 
 TYPES_REPORTS = Literal[
@@ -15,20 +13,19 @@ TYPES_REPORTS = Literal[
     "Region Disclosure Report",
     "Region Training Report",
     "Region Disclosure Management Report",
-]
-
-
-class ReportTypes(enum.IntEnum):
-    region_member_directory = 37
-    region_appointments_report = 52
-    region_permit_report = 72
-    region_disclosure_report = 76
-    region_training_report = 84
-    region_disclosure_management_report = 100
+]  # TODO move to schema.reports if created
+_report_types: dict[str, int] = {
+    "Region Member Directory": 37,
+    "Region Appointments Report": 52,
+    "Region Permit Report": 72,
+    "Region Disclosure Report": 76,
+    "Region Training Report": 84,
+    "Region Disclosure Management Report": 100,
+}
 
 
 class Reports:
-    def __init__(self, session: Logon):
+    def __init__(self, session: ci.Logon):
         """Constructor for Reports."""
         self.auth_ids = session.membership_number, session.role_number, session._jk
         self.client = session._client
@@ -79,15 +76,12 @@ class Reports:
                 reports a HTTP 5XX status code
 
         """
+        if report_type not in _report_types:
+            types = [*_report_types.keys()]
+            raise ci.CompassReportError(f"{report_type} is not a valid report type. Valid report types are {types}") from None
+
         # Get token for report type & role running said report:
-        try:
-            # report_type is given as `Title Case` with spaces, enum keys are in `snake_case`
-            rt_key = report_type.lower().replace(" ", "_")
-            run_report_url = scraper.get_report_token(self.client, self.auth_ids, ReportTypes[rt_key].value)
-        except KeyError:
-            # enum keys are in `snake_case`, output types as `Title Case` with spaces
-            types = [rt.name.title().replace("_", " ") for rt in ReportTypes]
-            raise errors.CompassReportError(f"{report_type} is not a valid report type. Valid report types are {types}") from None
+        run_report_url = scraper.get_report_token(self.client, self.auth_ids, _report_types[report_type])
 
         # Get initial reports page, for export URL and config:
         report_page = scraper.get_report_page(self.client, run_report_url)
