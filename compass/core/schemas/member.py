@@ -195,7 +195,17 @@ TYPES_AWARD_TYPE = Literal[
     # Formal awards process - higher good service
     "Bar to the Silver Acorn",
     "Silver Wolf",
-    # ???
+    # Meritorious Conduct Awards
+    "Chief Scout's Commendation for Meritorious Conduct",
+    "The Medal for Meritorious Conduct",
+    # Gallantry Awards
+    "The Gilt Cross",
+    "The Silver Cross",
+    "The Bronze Cross",
+    # Other Awards
+    "The Cornwell Scout Badge",
+    "The Chief Scout's Personal Award",
+    # Past Awards (not in the current awards scheme)
     "Medal of Merit",
     "Bar to the Medal of Merit",
 ]
