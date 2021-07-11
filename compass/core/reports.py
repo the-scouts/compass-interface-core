@@ -1,27 +1,8 @@
-import datetime
-from typing import Literal
-
 import compass.core as ci
-from compass.core._scrapers import reports as scraper
-from compass.core.logger import logger
-from compass.core.settings import Settings
+from compass.core._scrapers.reports import export_report
+from compass.core._scrapers.reports import TYPES_REPORTS
 
-TYPES_REPORTS = Literal[
-    "Region Member Directory",
-    "Region Appointments Report",
-    "Region Permit Report",
-    "Region Disclosure Report",
-    "Region Training Report",
-    "Region Disclosure Management Report",
-]  # TODO move to schema.reports if created
-_report_types: dict[str, int] = {
-    "Region Member Directory": 37,
-    "Region Appointments Report": 52,
-    "Region Permit Report": 72,
-    "Region Disclosure Report": 76,
-    "Region Training Report": 84,
-    "Region Disclosure Management Report": 100,
-}
+__all__ = ("Reports", "TYPES_REPORTS")  # only needed whilst still no schema file for reports
 
 
 class Reports:
@@ -29,9 +10,6 @@ class Reports:
         """Constructor for Reports."""
         self.auth_ids = session.membership_number, session.role_number, session._jk
         self.client = session._client
-
-        self.current_role = session.current_role
-        self.membership_number = session.membership_number
 
     def get_report(self, report_type: TYPES_REPORTS) -> bytes:
         """Exports report as CSV from Compass.
@@ -55,7 +33,6 @@ class Reports:
 
         Pitfalls to be aware of in this process include that:
         - Compass checks user-agent headers in some parts of the process
-            (TODO pinpoint which exactly)
         - There is a ten (10) minute default soft-timeout, which may run out
             before a report download has finished
         - If a requested report is too large, Compass can simply give up, often
@@ -76,47 +53,4 @@ class Reports:
                 reports a HTTP 5XX status code
 
         """
-        if report_type not in _report_types:
-            types = [*_report_types.keys()]
-            raise ci.CompassReportError(f"{report_type} is not a valid report type. Valid report types are {types}") from None
-
-        # Get token for report type & role running said report:
-        run_report_url = scraper.get_report_token(self.client, self.auth_ids, _report_types[report_type])
-
-        # Get initial reports page, for export URL and config:
-        report_page = scraper.get_report_page(self.client, run_report_url)
-
-        # Update form data & set location selection:
-        scraper.update_form_data(self.client, report_page, f"{Settings.base_url}/{run_report_url}")
-
-        # Export the report:
-        logger.info("Exporting report")
-        export_url_path, export_url_params = scraper.get_report_export_url(report_page.decode("UTF-8"))
-
-        time_string = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")  # colons are illegal on windows
-        filename = f"{time_string} - {self.membership_number} ({' - '.join(self.current_role)}).csv"
-
-        # start = time.time()
-        # TODO TRAINING REPORT ETC.
-        # # TODO REPORT BODY HAS KEEP ALIVE URL KeepAliveUrl
-        # p = PeriodicTimer(15, lambda: self.report_keep_alive(self.session, report_page.text))
-        # self.session.sto_thread.start()
-        # p.start()
-        # # ska_url = self.report_keep_alive(self.session, report_page.text)
-        # try:
-        #     self.download_report(self.session, f"{Settings.base_url}/{export_url_path}", export_url_params, filename, )  # ska_url
-        # except (ConnectionResetError, requests.ConnectionError):
-        #     logger.info(f"Stopped at {datetime.datetime.now()}")
-        #     p.cancel()
-        #     self.session.sto_thread.cancel()
-        #     raise
-        # logger.debug(f"Exporting took {time.time() -start}s")
-
-        csv_export = scraper.download_report_normal(
-            self.client,
-            f"{Settings.base_url}/{export_url_path}",
-            export_url_params,
-            filename,
-        )
-
-        return csv_export
+        return export_report(self.client, self.auth_ids, report_type, stream=False)
