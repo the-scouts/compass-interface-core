@@ -4,8 +4,8 @@ import re
 import time
 from typing import cast, Literal, TYPE_CHECKING
 
+import httpx
 from lxml import html
-import requests
 
 import compass.core as ci
 from compass.core.logger import logger
@@ -76,6 +76,7 @@ _report_ids: dict[TYPES_REPORTS, dict[ci.TYPES_UNIT_LEVELS, int]] = {
     "Awards Report": _report_ids_awards,
     "Disclosure Management Report": _report_ids_disclosure_management,
 }
+TYPES_FORMAT_CODES = Literal["CSV", "EXCEL", "XML"]
 
 
 def export_report(
@@ -83,8 +84,8 @@ def export_report(
     report_type: TYPES_REPORTS,
     hierarchy_level: ci.TYPES_HIERARCHY_LEVELS,
     auth_ids: TYPE_AUTH_IDS,
-    stream: bool = False,
-) -> str:
+    format_code: TYPES_FORMAT_CODES = "CSV",
+) -> bytes:
     """Exports report as CSV from Compass.
 
     See `Reports.get_report` for an overview of the export process
@@ -104,6 +105,12 @@ def export_report(
             reports a HTTP 5XX status code
 
     """
+    report_number = _report_number(report_type, hierarchy_level)
+    report_page = _prepare_report(client, auth_ids, report_number)
+    return _export_report(client, report_page, format_code)
+
+
+def _report_number(report_type: TYPES_REPORTS, hierarchy_level: ci.TYPES_HIERARCHY_LEVELS) -> int:
     if report_type not in _report_ids:
         types = [*_report_ids]
         raise ci.CompassReportError(f"{report_type} is not a valid report type. Valid report types are {types}") from None
@@ -111,8 +118,10 @@ def export_report(
     if hierarchy_level not in report_level_map:
         raise ci.CompassReportError(f"Requested report does not exist for hierarchy level: {hierarchy_level}.")
     hierarchy_level = cast(ci.TYPES_UNIT_LEVELS, hierarchy_level)
-    report_number = report_level_map[hierarchy_level]
+    return report_level_map[hierarchy_level]
 
+
+def _prepare_report(client: Client, auth_ids: TYPE_AUTH_IDS, report_number: int) -> str:
     # Get token for report type & role running said report:
     run_report_url = _get_report_token(client, auth_ids, report_number)
 
@@ -123,32 +132,7 @@ def export_report(
     # Update form data & set location selection:
     _update_form_data(client, report_page, run_report_url, report_number)
 
-    # Get report export URL:
-    logger.info("Exporting report")
-    export_url = _extract_report_export_url(report_page.decode("UTF-8"))
-
-    # Download report to CSV:
-    start = time.time()
-    csv_export = _download_report(client, export_url, streaming=stream)
-    logger.debug(f"Downloading took {time.time() - start:.2f}s")
-
-    # start = time.time()
-    # TODO TRAINING REPORT ETC.
-    # # TODO REPORT BODY HAS KEEP ALIVE URL KeepAliveUrl
-    # p = PeriodicTimer(15, lambda: self.report_keep_alive(self.session, report_page.text))
-    # self.session.sto_thread.start()
-    # p.start()
-    # # ska_url = _report_keep_alive(self.session, report_page.text)
-    # try:
-    #     _download_report(self.session, f"{Settings.base_url}/{export_url_path}", export_url_params, filename, )  # ska_url
-    # except (ConnectionResetError, requests.ConnectionError):
-    #     logger.info(f"Stopped at {datetime.datetime.now()}")
-    #     p.cancel()
-    #     self.session.sto_thread.cancel()
-    #     raise
-    # logger.debug(f"Exporting took {time.time() - start}s")
-
-    return csv_export
+    return report_page.decode("utf-8")
 
 
 def _get_report_token(client: Client, auth_ids: TYPE_AUTH_IDS, report_number: int) -> str:
@@ -228,35 +212,6 @@ def _form_data_appointments(form_data: dict[str, str], tree: html.HtmlElement) -
     return form_data | additional_form_data
 
 
-def _extract_report_export_url(report_page: str) -> str:
-    start = report_page.index("ExportUrlBase")
-    cut = report_page[start:].removeprefix('ExportUrlBase":"')
-    end = cut.index('"')
-    full_url = cut[:end].encode().decode("unicode-escape")
-    return f"{Settings.base_url}/{full_url}CSV"
-
-
-def _download_report(client: Client, url: str, streaming: bool) -> str:
-    # standard download
-    if not streaming:
-        return client.get(url).content.decode("utf-8-sig")  # report is returned with Byte Order Mark
-
-    # streaming download
-    csv_export = b""
-    with client.get(url, stream=True) as r:
-        _error_status(r)
-        for chunk in r.iter_content(chunk_size=None):  # Chunk size == 1MiB
-            csv_export += chunk
-    return csv_export.decode("utf-8-sig")  # report is returned with Byte Order Mark
-
-
-def _error_status(response: requests.Response, /, msg: str = "Request to Compass failed!") -> None:
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as err:
-        raise ci.CompassNetworkError(msg) from err
-
-
 def _parse_drop_down_list(tree: html.HtmlElement, element_id: str, /) -> dict[str, str]:
     table = tree.get_element_by_id(element_id)[0][0]
     return {str(i): row[0][0][0][1].text.replace("\xa0", " ") for i, row in enumerate(table[1:])}
@@ -265,6 +220,50 @@ def _parse_drop_down_list(tree: html.HtmlElement, element_id: str, /) -> dict[st
 def _get_defaults_labels(form_data: dict[str, str], default_indices_key: str, labels_map: dict[str, str]) -> str:
     indices = form_data.get(default_indices_key, "").split(",")
     return ", ".join(labels_map[i] for i in indices)
+
+
+def _export_report(client: Client, report_page: str, format_code: TYPES_FORMAT_CODES) -> bytes:
+    # Get report export URL:
+    logger.info("Exporting report")
+    export_url = _extract_report_export_url(report_page, format_code)
+
+    # Download report to CSV:
+    start = time.time()
+    export_content = client.get(export_url, timeout=30).content
+    logger.debug(f"Downloading took {time.time() - start:.2f}s")
+
+    # start = time.time()
+    # TODO TRAINING REPORT ETC.
+    # # TODO REPORT BODY HAS KEEP ALIVE URL KeepAliveUrl
+    # p = PeriodicTimer(15, lambda: self.report_keep_alive(self.session, report_page.text))
+    # self.session.sto_thread.start()
+    # p.start()
+    # # ska_url = _report_keep_alive(self.session, report_page.text)
+    # try:
+    #     _download_report(self.session, f"{Settings.base_url}/{export_url_path}", export_url_params, filename, )  # ska_url
+    # except (ConnectionResetError, httpx.ConnectError):
+    #     logger.info(f"Stopped at {datetime.datetime.now()}")
+    #     p.cancel()
+    #     self.session.sto_thread.cancel()
+    #     raise
+    # logger.debug(f"Exporting took {time.time() - start}s")
+
+    return export_content
+
+
+def _extract_report_export_url(report_page: str, format_code: TYPES_FORMAT_CODES) -> str:
+    start = report_page.index("ExportUrlBase")
+    cut = report_page[start:].removeprefix('ExportUrlBase":"')
+    end = cut.index('"')
+    full_url = cut[:end].encode().decode("unicode-escape")
+    return f"{Settings.base_url}/{full_url}{format_code}"
+
+
+def _error_status(response: httpx.Response, /, msg: str = "Request to Compass failed!") -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPError as err:
+        raise ci.CompassNetworkError(msg) from err
 
 
 def _report_keep_alive(client: Client, report_page: str) -> str:

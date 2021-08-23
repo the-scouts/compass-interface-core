@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from compass.core.logger import logger
 from compass.core.settings import Settings
@@ -11,7 +11,7 @@ from compass.core.util.compass_helpers import compass_restify
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    import requests
+    import httpx
 
     from compass.core.util.client import Client  # pylint: disable=ungrouped-imports
 
@@ -34,14 +34,12 @@ def auth_header_get(
     client: Client,
     url: str,
     *,
-    params: Optional[Mapping[str, Optional[str]]] = None,
-    headers: Optional[Mapping[str, str]] = None,
-    stream: Optional[bool] = None,
-    **kwargs: Any,
-) -> requests.Response:
+    params: dict[str, str],
+    headers: Mapping[str, str] | None = None,
+) -> httpx.Response:
     """Sends a HTTP GET request.
 
-    Pass-through method to requests.sessions.Session.get, also adding to
+    Pass-through method to httpx.Client.get, also adding to
     the counter of total requests sent by `compass.core`.
 
     Adds custom auth_header.py logic for certain Compass requests
@@ -67,11 +65,9 @@ def auth_header_get(
         url: Request URL
         params: Mapping to be sent in the query string for the request
         headers: Mapping of HTTP Headers
-        stream: Whether to stream download the response content.
-        kwargs: Optional arguments to session.get
 
     Returns:
-        requests.Response object from executing the request
+        httpx.Response object from executing the request
 
     Raises:
         CompassNetworkError
@@ -81,11 +77,10 @@ def auth_header_get(
     # pylint complains that we have more than 5 arguments.
     membership_number, role_number, jk = auth_ids
     headers = dict(headers or {}) | {"Auth": jk_hash(client, membership_number, role_number, jk)}
-
-    params = dict(params or {}) | {
+    params |= {
         "x1": f"{membership_number}",
         "x2": f"{jk}",
         "x3": f"{role_number}",
     }
 
-    return client.get(url, params=params, headers=headers, stream=stream, **kwargs)
+    return client.get(url, params=params, headers=headers)
