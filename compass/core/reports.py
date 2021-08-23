@@ -10,8 +10,9 @@ class Reports:
         """Constructor for Reports."""
         self.auth_ids = session.membership_number, session.role_number, session._jk
         self.client = session._client
+        self.hierarchy_level = session.hierarchy.level
 
-    def get_report(self, report_type: TYPES_REPORTS) -> bytes:
+    def get_report(self, report_type: TYPES_REPORTS) -> str:
         """Exports report as CSV from Compass.
 
         Exporting a report is of course surprisingly complicated. The process
@@ -53,4 +54,4 @@ class Reports:
                 reports a HTTP 5XX status code
 
         """
-        return export_report(self.client, self.auth_ids, report_type, stream=False)
+        return export_report(self.client, report_type, self.hierarchy_level, self.auth_ids, stream=False)
