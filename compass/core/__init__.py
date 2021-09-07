@@ -21,13 +21,8 @@ from compass.core.schemas.hierarchy import HierarchyMember
 from compass.core.schemas.hierarchy import HierarchySection
 from compass.core.schemas.hierarchy import HierarchyUnit
 from compass.core.schemas.hierarchy import HierarchyUnitMembers
-from compass.core.schemas.hierarchy import TYPES_HIERARCHY_LEVELS
-from compass.core.schemas.hierarchy import TYPES_UNIT_LEVELS
 from compass.core.schemas.hierarchy import UnitData
 from compass.core.schemas.logon import CompassProps
-from compass.core.schemas.logon import TYPES_ORG_LEVELS
-from compass.core.schemas.logon import TYPES_ROLE
-from compass.core.schemas.member import AddressData
 from compass.core.schemas.member import MemberAward
 from compass.core.schemas.member import MemberDetails
 from compass.core.schemas.member import MemberDisclosure
@@ -37,12 +32,17 @@ from compass.core.schemas.member import MemberRoleCore
 from compass.core.schemas.member import MemberRolePopup
 from compass.core.schemas.member import MemberRolesCollection
 from compass.core.schemas.member import MemberTrainingTab
-from compass.core.schemas.member import TYPES_ROLE_STATUS
-from compass.core.schemas.reports import TYPES_EXPORTED_REPORTS
-from compass.core.schemas.reports import TYPES_FORMAT_CODE
-from compass.core.schemas.reports import TYPES_FORMAT_CODES
-from compass.core.schemas.reports import TYPES_REPORTS
 from compass.core.settings import Settings
+from compass.core.types.hierarchy import TYPES_HIERARCHY_LEVELS
+from compass.core.types.hierarchy import TYPES_UNIT_LEVELS
+from compass.core.types.logon import TYPES_ORG_LEVELS
+from compass.core.types.logon import TYPES_ROLE
+from compass.core.types.member import AddressData
+from compass.core.types.member import TYPES_ROLE_STATUS
+from compass.core.types.reports import TYPES_EXPORTED_REPORTS
+from compass.core.types.reports import TYPES_FORMAT_CODE
+from compass.core.types.reports import TYPES_FORMAT_CODES
+from compass.core.types.reports import TYPES_REPORTS
 
 
 class CompassInterface:
