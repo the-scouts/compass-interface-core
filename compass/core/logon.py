@@ -95,7 +95,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
         self._asp_net_id: Final[str] = client.cookies["ASP.NET_SessionId"]
         if compass_props.master.sys.session_id is None:
             raise ci.CompassError("ASP.NET ID must be specified!")
-        self._session_id: Final[str] = compass_props.master.sys.session_id
+        self._session_id: Final[str] = compass_props.master.sys.session_id  # session ID is an RFC 4122 UUID string
 
         # TODO session timeout logic
 
@@ -153,7 +153,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
         Args:
             asp_net_id: ASP.NET Session ID, from cookie
             user_props: Compass master.sys.user properties
-            session_id: Compass session UID
+            session_id: Compass session RFC 4122 UUID string
             current_role: Role used by initialised session
 
         Returns:
@@ -175,7 +175,7 @@ class Logon:  # pylint: disable=too-many-instance-attributes
 
     def __repr__(self) -> str:
         """String representation of the Logon class."""
-        return f"{self.__class__} Compass ID: {self.membership_number} ({' - '.join(self.current_role)})"
+        return f"<{self.__class__.__name__}> Compass ID: {self.membership_number} ({' - '.join(self.current_role)})"
 
     def _extend_session_timeout(self, sto: _TYPES_STO = "0") -> str:
         # Session time out. 4 values: None (normal), 0 (STO prompt) 5 (Extension, arbitrary constant) X (Hard limit)

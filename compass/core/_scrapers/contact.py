@@ -144,16 +144,17 @@ def _process_phone_numbers(phone_numbers: list[dict[str, str]]) -> str:
     Returns: main phone number
 
     """
-    numbers = [""]
     for number_props in phone_numbers:
         if number_props["IsMain"]:
             return number_props["Number"]
-        numbers.append(number_props["Number"])
-    return numbers[0]
+    try:
+        return phone_numbers[0]["Number"]
+    except IndexError:
+        return ""
 
 
-def _process_email(email_properties: list[dict[str, str]]) -> str:
-    """Return a main phone number from a list of phone number properties.
+def _process_email(email_addresses: list[dict[str, str]]) -> str:
+    """Return a main email address from a list of email address properties.
 
     Each email record is as follows:
     {
@@ -164,7 +165,7 @@ def _process_email(email_properties: list[dict[str, str]]) -> str:
     }
 
     Args:
-        email_properties: list of email records
+        email_addresses: list of email records
 
     Todo:
         We could use the number type properties?
@@ -172,12 +173,13 @@ def _process_email(email_properties: list[dict[str, str]]) -> str:
     Returns: main email address
 
     """
-    emails = [""]
-    for email_props in email_properties:
+    for email_props in email_addresses:
         if email_props["IsMain"]:
             return email_props["EmailAddress"]
-        emails.append(email_props["EmailAddress"])
-    return emails[0]
+    try:
+        return email_addresses[0]["EmailAddress"]
+    except IndexError:
+        return ""
 
 
 def _process_misc_sections(entries: list[str]) -> dict[str, str]:
