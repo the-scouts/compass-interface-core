@@ -73,6 +73,8 @@ lookup_occupation = {
 def get_contact_profile(client: Client, membership_number: int, /) -> ci.MemberDetails:
     request_json = {"Source": "ADULT", "ContactNumber": f"{membership_number}"}
     response = client.post(f"{Settings.base_url}/Contact/Profile", json=request_json)
+    if response.content == b"null":
+        raise ci.CompassPermissionError(f"You do not have permission to the details of {membership_number}")
     # yes, double loading the JSON is deliberate. The serialisation from Compass is insane...
     data = json.loads(json.loads(response.content.decode("utf-8")))
 
@@ -135,11 +137,16 @@ def _process_phone_numbers(phone_numbers: list[dict[str, str]]) -> str:
         "IsMain": bool
     }
 
+    The "Type" key gives the phone number type, one of "Home","Home Mobile",
+    "Daytime", "Daytime Mobile", "Scouting Enquiries", "Volunteering", or
+    "Unspecified". It could also be "Daytime Fax" or "Home Fax", but I would
+    really despair if people have listed their facsimile numbers on Compass...
+
+    The "CommunicationNumber" key seems to be a unique identifier for the phone
+    number record itself
+
     Args:
         phone_numbers: list of phone number records
-
-    Todo:
-        We could use the number type properties?
 
     Returns: main phone number
 
@@ -164,11 +171,14 @@ def _process_email(email_addresses: list[dict[str, str]]) -> str:
         "IsMain": bool
     }
 
+    The "Type" key gives the phone number type, one of "Home","Volunteering",
+    "Scouting Enquiries", "Work", or "Unspecified".
+
+    The "CommunicationNumber" key seems to be a unique identifier for the email
+    address record itself
+
     Args:
         email_addresses: list of email records
-
-    Todo:
-        We could use the number type properties?
 
     Returns: main email address
 
@@ -192,7 +202,28 @@ def _process_misc_sections(entries: list[str]) -> dict[str, str]:
     return out
 
 
+ROLE_STATUS_MAP = {"A": "Full"}
+
+
 def get_contact_roles(client: Client, membership_number: int, /) -> ci.MemberRolesCollection:
+    """Get a member's roles from the /Contact/ API.
+
+    The API only works for roles that can create/update roles.
+
+    Returned role objects have the following keys:
+        base_role_description, class_desc, country, end_Date, Level, location,
+        member_role_number, org_status, organisation_number, parent_role,
+        preferred_order, review_date, role_class, Role_Desc, Role_Number,
+        Section_Type, start_date, status, status_desc, suspension_status
+
+    Args:
+        client: A client object that has been authenticated against Compass
+        membership_number: Membership number to get roles for
+
+    Returns:
+        A MemberRolesCollection object
+
+    """
     response = client.post(f"{Settings.base_url}/Contact/Roles", json={"ContactNumber": f"{membership_number}"})
     data = json.loads(response.content.decode("utf-8"))
 
@@ -208,11 +239,10 @@ def get_contact_roles(client: Client, membership_number: int, /) -> ci.MemberRol
             location_name=role_dict["location"].strip(),
             role_start=_parse_iso_date(role_dict["start_date"]),  # type  ignore[arg-type]
             role_end=role_dict["end_Date"],  # None  # this API seems to only return open roles
-            role_status=role_dict["status_desc"].split(" (")[0],  # TODO text processing
+            role_status=ROLE_STATUS_MAP[role_dict["status"]],
             review_date=_parse_iso_date(role_dict["review_date"]),
-            can_view_details=False,  # TODO implement this
+            can_view_details=True,  # assume true as you can only use this API call if you can create roles
         )
-        # status_code = role_dict["status"]  # TODO work out code -> status map ("A" == "Full"?)
 
         roles_data[role_details.role_number] = role_details
 
