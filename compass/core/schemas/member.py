@@ -11,6 +11,7 @@ from compass.core.types.member import TYPES_AWARD_TYPE
 from compass.core.types.member import TYPES_DISCLOSURE_PROVIDERS
 from compass.core.types.member import TYPES_DISCLOSURE_STATUSES
 from compass.core.types.member import TYPES_DISCLOSURES_APPOINTMENT
+from compass.core.types.member import TYPES_DISCLOSURES_COUNTRIES
 from compass.core.types.member import TYPES_ETHNICITY
 from compass.core.types.member import TYPES_LEARNING_METHOD
 from compass.core.types.member import TYPES_OCCUPATION
@@ -132,12 +133,12 @@ class MemberRoleDetail(MemberBase, MemberRoleBase):
     # Approval information
     ce_check_valid: bool
     ce_check_date: Optional[datetime.date]  # Optional for Closed roles - e.g. #499, role closed 1976, or if Pending
-    disclosure_check: Optional[TYPES_DISCLOSURES_APPOINTMENT]
+    disclosure_check: Union[TYPES_DISCLOSURES_APPOINTMENT, None, pydantic.constr(regex=r"^Issued : \d\d [A-Z][a-z]+ \d\d\d\d$")]  # type: ignore[valid-type]  # NoQA: F722
     disclosure_date: Optional[datetime.date]
     references: Optional[TYPES_REFERENCES] = None
     appointment_panel_approval: Optional[Literal["NC", "NR", "S", "U"]] = None
     commissioner_approval: Optional[Literal["NC", "NR", "RR", "S", "U"]] = None
-    committee_approval: Optional[Literal["NC", "S", "U"]] = None
+    committee_approval: Optional[Literal["NC", "NR", "S", "U"]] = None
 
 
 # Roles Tab (Role Detail Popup - Hierarchy)
@@ -252,12 +253,17 @@ class MemberAward(MemberBase):
     date: datetime.date
 
 
+_DISCLOSURE_NUM_SCOTLAND = Union[pydantic.constr(regex=r"^\d{7}R$"), Literal["Non-OSCR Reg"]]  # type: ignore[misc]  # NoQA: F722
+_DISCLOSURE_NUM_NI = pydantic.constr(regex=r"^PECS(VC)?\d{6}(CM|BM|RL)$")  # PECS was Pre-Employment Consultancy Service
+
+
 class MemberDisclosure(MemberBase):
-    country: Optional[Literal["England & Wales", "Northern Ireland", "Overseas", "Scotland", "The Scout Association"]]
+    country: TYPES_DISCLOSURES_COUNTRIES
     provider: TYPES_DISCLOSURE_PROVIDERS
-    type: Literal["Enhanced with Barring"]
+    # enhanced with barring is almost always the case.
+    type: Literal["Enhanced with Barring", "Enhanced", "Local Check", "Adult Enhanced with Barring", "Unknown Disclosure Type"]
     # If Application Withdrawn, no disclosure number. If Scottish in the early 2000s, 7 digits ending with an R
-    number: Union[int, None, pydantic.constr(regex=r"^\d{7}R$")]  # type: ignore[valid-type]  # NoQA: F722
+    number: Union[int, None, _DISCLOSURE_NUM_SCOTLAND, _DISCLOSURE_NUM_NI]  # type: ignore[valid-type]  # NoQA: F722
     issuer: Optional[TYPES_DISCLOSURE_PROVIDERS]
     issue_date: Optional[datetime.date]  # If Application Withdrawn, maybe no issue date
     status: TYPES_DISCLOSURE_STATUSES

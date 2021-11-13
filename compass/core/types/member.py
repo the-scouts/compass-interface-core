@@ -76,6 +76,17 @@ TYPES_DISCLOSURES_APPOINTMENT = Literal[
     "Disclosure Issued",
     "ID check required",
     "No Disclosure",
+    "No disclosure",
+    "Expired",
+    "Application Withdrawn",
+    "Final applicant information required",
+    "Application received at Atlantic Data",
+    "Issued : ",
+    "ID selection required",
+    "Form returned to District",
+    "Application form required",
+    "Form returned to applicant",
+    "Application received at HQ",
 ]  # Disclosure statuses in role details popup
 TYPES_LEARNING_METHOD = Literal[
     "Course",
@@ -121,6 +132,7 @@ TYPES_PERMIT = Literal[
     "Bell Boating",
     "Canoeing",
     "Caving",
+    "Climbing (Multi Pitch)",
     "Climbing and Abseiling",
     "Dinghy Sailing",
     "Dragon Boating",
@@ -141,7 +153,9 @@ TYPES_PERMIT = Literal[
     "Rafting (Traditional)",
     "Rowing and Sculling",
     "Scuba Diving",
+    "Skiing",
     "Snorkelling",
+    "Snowboarding",
     "Snowsports",
     "Water Skiing",
     "White Water Rafting",
@@ -168,7 +182,8 @@ TYPES_PERMIT_CATEGORIES = Literal[
     "With Compound Bows",
     "Without Compound Bows",
 ]
-TYPES_PERMIT_TYPE = Literal["Leadership", "Supervisory"]
+TYPES_PERMIT_TYPE = Literal["Leadership", "Supervisory", "Personal"]
+# https://heritage.scouts.org.uk/wp-content/uploads/2019/07/Awards-Decorations-and-their-Emblems-of-The-Scout-Association-formerly-the-Boy-Scout-Association.pdf
 TYPES_AWARD_TYPE = Literal[
     "Chief Scout's 5 years Service Award",
     "Chief Scout's 10 years Service Award",
@@ -200,9 +215,25 @@ TYPES_AWARD_TYPE = Literal[
     # Other Awards
     "The Cornwell Scout Badge",
     "The Chief Scout's Personal Award",
+    # Non-TSA Awards
+    "Bronze Wolf",
     # Past Awards (not in the current awards scheme)
-    "Medal of Merit",
-    "Bar to the Medal of Merit",
+    "Medal of Merit",  # stopped being awarded in 2007
+    "Bar to the Medal of Merit",  # stopped being awarded in 2007
+    "Chief Scout's Commendation for Gallantry",  # stopped being awarded in 2006-04
+    "Certificate for Meritorious Conduct",  # stopped being awarded in 2006-04
+    "Bar to the Medal for Meritorious Conduct",
+]
+TYPES_DISCLOSURES_COUNTRIES = Optional[
+    Literal[
+        "England & Wales",
+        "Northern Ireland",
+        "Overseas",
+        "Scotland",
+        "The Scout Association",
+        "Test Country",
+        "UK",
+    ]
 ]
 TYPES_DISCLOSURE_PROVIDERS = Literal[
     "Access NI",
@@ -211,6 +242,7 @@ TYPES_DISCLOSURE_PROVIDERS = Literal[
     "Disclosure Scotland",
     "Local Check",  # BSO
     "Other",
+    "UKHQ",
 ]
 TYPES_DISCLOSURE_STATUSES = Literal[
     "Application Withdrawn",
@@ -222,6 +254,12 @@ TYPES_DISCLOSURE_STATUSES = Literal[
     "Final applicant information required",  # BSO
     "ID check required",
     "ID selection required",
+    "No Disclosure",
+    "Application received at Atlantic Data",
+    "Application form required",
+    "Form returned to District",
+    "Issued",
+    "Form returned to applicant",
 ]  # Disclosure statuses in disclosures tab
 
 

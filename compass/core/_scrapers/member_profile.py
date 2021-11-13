@@ -67,9 +67,21 @@ NON_VOLUNTEER_TITLES = {
     # occasional helper roles:
     "group occasional helper",
     "group occasional helper.",
+    "group occasional helper (pre-prov)",
+    "group occasional helper (prov)",
+    "group occassional helper",
+    "group ocassional helper",
     "district occasional helper",
+    "district occasional helper (pre-prov)",
+    "district occasional helper (prov)",
     "county occasional helper",
+    "area occasional helper",
     "country occasional helper",
+    "occasional helper",
+    "occasional helper (pre-prov)",
+    "occassional helper",
+    "oh",
+    "parent helper",
     # pvg roles:
     "group non member pvg only"
     "group non member pvg only (prov)"
@@ -102,8 +114,25 @@ NON_VOLUNTEER_TITLES = {
     "scout network member",
     "district scout network",
     "district scout network member",
+    "district occasional helper - network",  # one district used this twice back in 2015...
     "county scout network member",
+    "county scout network member (pre-prov)",
+    "area scout network member",
     "bso scout network member",
+    "scotland region scout network member",
+    "network member",
+    "scout network member",
+    "scout network member (pre-prov)",
+    "scout network member - dofe gold",
+    "district scout network",
+    "area scout network",
+    "bso scout network",
+    "county scout network",
+    "scotland region scout network",
+    "scotland regional scout network",
+    "scout network",
+    # district scout network chairperson
+    # district scout network programme coordinator
 }
 
 # _reduce_date_list
@@ -115,6 +144,15 @@ mogl_modules = {
     "SG": "safeguarding",
     "FA": "first_aid",
     "gdpr": "gdpr",  # phony entry, used for key
+}
+
+# get_awards tab
+NO_DEFINITE_ARTICLE = {
+    "Medal for Meritorious Conduct",
+    "Gilt Cross",
+    "Silver Cross",
+    "Bronze Cross",
+    "Chief Scout's Personal Award",
 }
 
 
@@ -661,7 +699,7 @@ def _compile_ongoing_learning(training_plps: TYPES_TRAINING_PLPS, tree: html.Htm
         )
 
     # Update training_ogl with missing mandatory ongoing learning types
-    blank_module: TYPES_TRAINING_OGL_DATES = dict(completed_date=None, renewal_date=None)
+    blank_module: TYPES_TRAINING_OGL_DATES = {"completed_date": None, "renewal_date": None}
     return {mogl_type: training_ogl.get(mogl_type, blank_module) for mogl_type in mogl_modules.values()}
 
 
@@ -695,10 +733,13 @@ def get_awards_tab(client: Client, membership_number: int, /) -> list[ci.MemberA
     with validation_errors_logging(membership_number):
         for row in rows:
             award_props = row[1][0]  # Properties are stored as yet another sub-table
+            award_type = award_props[0][1].text_content()
+            if award_type in NO_DEFINITE_ARTICLE:
+                award_type = "The " + award_type
             awards.append(
                 ci.MemberAward(
                     membership_number=membership_number,
-                    type=award_props[0][1].text_content(),
+                    type=award_type,
                     location=award_props[1][1].text_content() or None,
                     date=parse_date(award_props[2][1].text_content() or ""),  # type  ignore[arg-type]
                 )
@@ -742,14 +783,17 @@ def get_disclosures_tab(client: Client, membership_number: int, /) -> list[ci.Me
         for row in rows:
             # Get children (cells in row)
             cells = list(row)
+            number = cells[3].text_content() or None  # If Application Withdrawn, no disclosure number
+            if number == "Non-OSCR-Reg":
+                number = "Non-OSCR Reg"
 
             disclosures.append(
                 ci.MemberDisclosure(
                     membership_number=membership_number,
-                    country=cells[0].text_content() or None,  # Country sometimes missing (Application Withdrawn)
+                    country=cells[0].text_content().strip() or None,  # Country sometimes missing (Application Withdrawn)
                     provider=cells[1].text_content(),
                     type=cells[2].text_content(),
-                    number=cells[3].text_content() or None,  # If Application Withdrawn, no disclosure number
+                    number=number,
                     issuer=cells[4].text_content() or None,
                     issue_date=parse_date(cells[5].text_content()),  # If Application Withdrawn, maybe no issue date
                     status=cells[6].text_content(),
