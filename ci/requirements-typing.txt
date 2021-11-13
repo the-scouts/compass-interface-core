@@ -1,4 +1,0 @@
--r requirements-run.txt
-
-# type stubs
-lxml-stubs
